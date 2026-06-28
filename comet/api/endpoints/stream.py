@@ -649,7 +649,9 @@ async def stream(
         search_season=search_season,
         cache_media_ids=cache_media_ids,
     )
-    cache_result = await cache_manager.check_and_decide(torrent_count)
+    cache_result = await cache_manager.check_and_decide(
+        torrent_count, torrent_manager.max_updated_at
+    )
     force_scrape_now = not primary_cached
     lock_acquired = cache_result.lock_acquired
 
@@ -684,15 +686,6 @@ async def stream(
 
     if cache_result.should_return_wait_message and not force_scrape_now:
         return _wait_response()
-
-    if cache_result.should_show_first_search_message:
-        cached_results.append(
-            {
-                "name": _stream_notice_name(kodi, "[🔄] Comet", "[INFO] Comet"),
-                "description": "First search for this media - More results will be available in a few seconds...",
-                "url": "https://comet.feels.legal",
-            }
-        )
 
     if cache_result.should_scrape_background and not force_scrape_now:
         logger.log(
@@ -733,7 +726,6 @@ async def stream(
 
     service_cache_status = defaultdict(dict)
     verified_service_cache_status = defaultdict(dict)
-    show_account_sync_trigger = use_account_scrape
     if use_account_scrape:
         if not account_snapshot_ready:
             await ensure_account_snapshot_ready(session, debrid_entries, ip)
@@ -927,23 +919,6 @@ async def stream(
     format_title_fn = format_title
     torrent_extension = get_debrid_extension("torrent")
     torrent_service = "" if kodi else torrent_extension
-
-    if show_account_sync_trigger:
-        for entry_index, _, debrid_extension in debrid_stream_specs:
-            cached_results.append(
-                {
-                    "name": (
-                        f"[{debrid_extension}] Comet Sync"
-                        if kodi
-                        else f"[{debrid_extension}🔄] Comet Sync"
-                    ),
-                    "description": (
-                        "Sync debrid account library now.\n"
-                        "Select this stream, then retry this title in a few seconds."
-                    ),
-                    "url": f"{playback_base_url}/debrid-sync/{entry_index}",
-                }
-            )
 
     selected_info_hashes = _select_info_hashes_by_resolution(
         ranked_info_hashes=torrent_manager.ranked_torrents,

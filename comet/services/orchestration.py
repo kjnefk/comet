@@ -65,6 +65,7 @@ class TorrentManager:
         self.ready_to_cache = []
         self.ranked_torrents = {}
         self.primary_cached = False
+        self.max_updated_at = 0
 
     def _matches_requested_scope(
         self,
@@ -167,6 +168,10 @@ class TorrentManager:
             rows = list(best_rows.values())
 
         for row in rows:
+            updated_at = row["updated_at"] or 0
+            if updated_at > self.max_updated_at:
+                self.max_updated_at = updated_at
+
             parsed_data = ParsedData(**orjson.loads(row["parsed_json"]))
             ensure_multi_language(parsed_data)
 
