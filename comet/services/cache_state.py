@@ -104,7 +104,7 @@ class CacheStateManager:
             self.media_only_id, cache_media_ids
         )
 
-    async def get_fresh_torrent_count(self) -> int:
+    async def get_fresh_torrent_count(self, max_updated_at: float = 0) -> int:
         """
         Check for at least one 'fresh' cached torrent based on LIVE_TORRENT_CACHE_TTL.
 
@@ -114,6 +114,11 @@ class CacheStateManager:
         min_timestamp = None
         if settings.LIVE_TORRENT_CACHE_TTL >= 0:
             min_timestamp = time.time() - settings.LIVE_TORRENT_CACHE_TTL
+
+        if max_updated_at > 0:
+            if min_timestamp is None or max_updated_at >= min_timestamp:
+                return 1
+            return 0
 
         if not self.cache_media_ids:
             return 0
@@ -260,17 +265,20 @@ class CacheStateManager:
         else:
             return ScrapeDecision.WAIT_FOR_OTHER
 
-    async def check_and_decide(self, torrent_count: int) -> CacheCheckResult:
+    async def check_and_decide(
+        self, torrent_count: int, max_updated_at: float = 0
+    ) -> CacheCheckResult:
         """
         Main entry point: check cache state and decide what action to take.
 
         Args:
             torrent_count: Number of cached torrents from TorrentManager.get_cached_torrents()
+            max_updated_at: Maximum updated_at timestamp from cached torrents
 
         Returns:
             CacheCheckResult with state, decision, and lock info
         """
-        fresh_count = await self.get_fresh_torrent_count()
+        fresh_count = await self.get_fresh_torrent_count(max_updated_at)
         is_first = await self.check_is_first_search()
 
         state = self._determine_state(fresh_count, torrent_count, is_first)
