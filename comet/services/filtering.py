@@ -1,3 +1,4 @@
+import re
 from collections import OrderedDict, defaultdict
 from threading import Event, Lock
 
@@ -21,6 +22,41 @@ else:
 
 def quick_alias_match(text_normalized: str, ez_aliases_normalized: list[str]):
     return any(alias in text_normalized for alias in ez_aliases_normalized)
+
+
+# Bracketed metadata (e.g. "[1999, BDRip]", "(S2)", "{HEVC}") that pollutes a
+# title segment and breaks RTN parsing.
+_BRACKET_CONTENT = re.compile(r"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}")
+
+
+def alternate_title_match(torrent_title: str, title: str, aliases) -> bool:
+    """Match multi-title release names that RTN can't fully parse.
+
+    Releases (common for anime / RU scene) often list several titles separated
+    by "/", e.g. "Инициал «Ди» / Initial D: Second Stage / Второй этап". RTN
+    only parses the first one, so a non-English first title fails title_match.
+    Here we split on the separator, strip bracketed metadata from each segment,
+    and try to match each remaining segment against the expected title/aliases.
+    """
+    if "/" not in torrent_title:
+        return False
+
+    for segment in torrent_title.split("/"):
+        segment = _BRACKET_CONTENT.sub(" ", segment).strip()
+        if not segment:
+            continue
+
+        try:
+            parsed_segment = _parse_with_cache(segment)
+        except ValidationError:
+            continue
+
+        if parsed_segment.parsed_title and title_match(
+            title, parsed_segment.parsed_title, aliases=aliases
+        ):
+            return True
+
+    return False
 
 
 def scrub(t: str):
@@ -250,7 +286,9 @@ def filter_worker(
             scrub(torrent_title), ez_aliases_normalized
         )
         if not alias_matched:
-            if not title_match(title, parsed.parsed_title, aliases=aliases):
+            if not title_match(
+                title, parsed.parsed_title, aliases=aliases
+            ) and not alternate_title_match(torrent_title, title, aliases):
                 _log_exclusion(
                     f"❌ Rejected (Title Mismatch) | {torrent_title} | Parsed: {parsed.parsed_title} | Expected: {title}"
                 )
