@@ -1,7 +1,7 @@
-import hashlib
 from typing import Any, Optional
 
 import orjson
+import xxhash
 from fastapi import Request, Response
 
 from comet.core.models import settings
@@ -95,7 +95,8 @@ def generate_etag(data: Any):
     else:
         content = orjson.dumps(data, option=orjson.OPT_SORT_KEYS)
 
-    hash_digest = hashlib.md5(content, usedforsecurity=False).hexdigest()[:16]
+    # Bolt Optimization: Use xxhash for faster non-cryptographic hashing
+    hash_digest = xxhash.xxh64(content).hexdigest()[:16]
     return f'W/"{hash_digest}"'
 
 
