@@ -967,7 +967,7 @@ async def stream(
                 else False
             )
 
-            if not is_cached and service == "torbox" and torrent["seeders"] > 5:
+            if not is_cached and service == "torbox" and (torrent.get("seeders") or 0) > 5:
                 async def _cache_to_torbox(s=service, e_idx=entry_index, ih=info_hash, t_title=torrent_title, srcs=torrent.get("sources")):
                     try:
                         from comet.debrid.manager import get_debrid
