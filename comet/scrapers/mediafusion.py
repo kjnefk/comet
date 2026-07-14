@@ -1,8 +1,11 @@
+import logging
 from comet.core.logger import log_scraper_error
 from comet.scrapers.base import BaseScraper
 from comet.scrapers.helpers.mediafusion import mediafusion_config
 from comet.scrapers.models import ScrapeRequest
 
+# Setup logger for the module
+logger = logging.getLogger(__name__)
 
 class MediaFusionScraper(BaseScraper):
     def __init__(
@@ -26,31 +29,47 @@ class MediaFusionScraper(BaseScraper):
             ) as response:
                 results = await response.json()
 
-            for torrent in results["streams"]:
-                title_full = torrent["description"]
-                lines = title_full.split("\n")
+            streams = results.get("streams", [])
+            if not streams:
+                return []
 
-                title = lines[0].replace("📂 ", "").replace("/", "")
+            for torrent in streams:
+                try:
+                    title_full = torrent.get("description", "Unknown Title")
+                    lines = title_full.split("\n")
 
-                seeders = None
-                if "👤" in lines[1]:
-                    seeders = int(lines[1].split("👤 ")[1].split("\n")[0])
+                    title = lines[0].replace("📂 ", "").replace("/", "")
 
-                tracker = lines[-1].split("🔗 ")[1]
+                    seeders = None
+                    if len(lines) > 1 and "👤" in lines[1]:
+                        try:
+                            seeders = int(lines[1].split("👤 ")[1].split("\n")[0])
+                        except (ValueError, IndexError):
+                            seeders = None
 
-                torrents.append(
-                    {
-                        "title": title,
-                        "infoHash": torrent["infoHash"].lower(),
-                        "fileIndex": torrent.get("fileIdx", None),
-                        "seeders": seeders,
-                        "size": torrent["behaviorHints"][
-                            "videoSize"
-                        ],  # not the pack size but still useful for prowlarr users
-                        "tracker": f"MediaFusion|{tracker}",
-                        "sources": torrent.get("sources", []),
-                    }
-                )
+                    tracker = "Unknown"
+                    if len(lines) > 0 and "🔗" in lines[-1]:
+                        tracker = lines[-1].split("🔗 ")[1]
+
+                    torrents.append(
+                        {
+                            "title": title,
+                            "infoHash": torrent.get("infoHash", "").lower(),
+                            "fileIndex": torrent.get("fileIdx"),
+                            "seeders": seeders,
+                            "size": torrent.get("behaviorHints", {}).get("videoSize"),
+                            "tracker": f"MediaFusion|{tracker}",
+                            "sources": torrent.get("sources", []),
+                        }
+                    )
+                except Exception as e:
+                    # Log the specific stream failure so you can debug API changes
+                    logger.warning(
+                        f"MediaFusion: Failed to parse a stream for {request.media_id}. "
+                        f"Error: {e}. Stream data: {torrent}"
+                    )
+                    continue
+                    
         except Exception as e:
             log_scraper_error("MediaFusion", self.url, request.media_id, e)
 
