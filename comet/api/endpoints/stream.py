@@ -967,7 +967,7 @@ async def stream(
                 else False
             )
 
-            if not is_cached and service == "torbox" and (torrent.get("seeders") or 0) > 5:
+            if not is_cached and service == "torbox" and (torrent.get("seeders") or 0) > 500:
                 async def _cache_to_torbox(e_idx=entry_index, ih=info_hash, t_title=torrent_title, srcs=torrent.get("sources")):
                     try:
                         api_key = debrid_entries[e_idx]["apiKey"]
