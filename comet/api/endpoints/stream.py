@@ -685,14 +685,6 @@ async def stream(
     if cache_result.should_return_wait_message and not force_scrape_now:
         return _wait_response()
 
-    if cache_result.should_show_first_search_message:
-        cached_results.append(
-            {
-                "name": _stream_notice_name(kodi, "[🔄] Comet", "[INFO] Comet"),
-                "description": "First search for this media - More results will be available in a few seconds...",
-                "url": "https://comet.feels.legal",
-            }
-        )
 
     if cache_result.should_scrape_background and not force_scrape_now:
         logger.log(
@@ -928,22 +920,6 @@ async def stream(
     torrent_extension = get_debrid_extension("torrent")
     torrent_service = "" if kodi else torrent_extension
 
-    if show_account_sync_trigger:
-        for entry_index, _, debrid_extension in debrid_stream_specs:
-            cached_results.append(
-                {
-                    "name": (
-                        f"[{debrid_extension}] Comet Sync"
-                        if kodi
-                        else f"[{debrid_extension}🔄] Comet Sync"
-                    ),
-                    "description": (
-                        "Sync debrid account library now.\n"
-                        "Select this stream, then retry this title in a few seconds."
-                    ),
-                    "url": f"{playback_base_url}/debrid-sync/{entry_index}",
-                }
-            )
 
     selected_info_hashes = _select_info_hashes_by_resolution(
         ranked_info_hashes=torrent_manager.ranked_torrents,
@@ -1045,6 +1021,21 @@ async def stream(
                 cached_results.append(the_stream)
             else:
                 non_cached_results.append(the_stream)
+
+            if not is_cached and service == "torbox" and torrent["seeders"] > 5:
+                async def _cache_to_torbox(s=service, e_idx=entry_index, ih=info_hash, t_title=torrent_title, srcs=torrent.get("sources")):
+                    try:
+                        from comet.debrid.manager import get_debrid
+                        deb = get_debrid(session, media_id, media_only_id, s, debrid_entries[e_idx]["apiKey"], ip)
+                        if deb:
+                            mag = f"magnet:?xt=urn:btih:{ih}&dn={quote(t_title)}"
+                            if srcs:
+                                for source in srcs:
+                                    mag += f"&tr={quote(source, safe='')}"
+                            await deb._post_store_json(f"/magnets?client_ip={ip}", {"magnet": mag}, "add torrent to store")
+                    except Exception as e:
+                        logger.warning(f"Failed to cache torrent {ih} to torbox: {e}")
+                background_tasks.add_task(_cache_to_torbox)
 
         if enable_torrent:
             if deduplicate_streams and info_hash in added_hashes:
