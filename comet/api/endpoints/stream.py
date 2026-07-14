@@ -968,16 +968,22 @@ async def stream(
             )
 
             if not is_cached and service == "torbox" and (torrent.get("seeders") or 0) > 5:
-                async def _cache_to_torbox(s=service, e_idx=entry_index, ih=info_hash, t_title=torrent_title, srcs=torrent.get("sources")):
+                async def _cache_to_torbox(e_idx=entry_index, ih=info_hash, t_title=torrent_title, srcs=torrent.get("sources")):
                     try:
-                        from comet.debrid.manager import get_debrid
-                        deb = get_debrid(session, media_id, media_only_id, s, debrid_entries[e_idx]["apiKey"], ip)
-                        if deb:
-                            mag = f"magnet:?xt=urn:btih:{ih}&dn={quote(t_title)}"
-                            if srcs:
-                                for source in srcs:
-                                    mag += f"&tr={quote(source, safe='')}"
-                            await deb._post_store_json(f"/magnets?client_ip={ip}", {"magnet": mag}, "add torrent to store")
+                        api_key = debrid_entries[e_idx]["apiKey"]
+                        mag = f"magnet:?xt=urn:btih:{ih}&dn={quote(t_title)}"
+                        if srcs:
+                            for source in srcs:
+                                mag += f"&tr={quote(source, safe='')}"
+                        
+                        # Call Torbox API directly to avoid StremThru JSON deserialization bugs
+                        async with session.post(
+                            "https://api.torbox.app/v1/api/torrents/createtorrent",
+                            headers={"Authorization": f"Bearer {api_key}"},
+                            data={"magnet": mag}
+                        ) as resp:
+                            if resp.status != 200:
+                                logger.warning(f"Torbox direct cache failed for {ih}: {await resp.text()}")
                     except Exception as e:
                         logger.warning(f"Failed to cache torrent {ih} to torbox: {e}")
                 background_tasks.add_task(_cache_to_torbox)
