@@ -260,6 +260,30 @@ def _extract_relevant_file_entries(file_specs) -> list[dict]:
     return files
 
 
+def _iter_bencoded_file_specs(info: dict) -> Iterator[tuple[int, str, int]]:
+    files = info.get(b"files")
+    file_entries = files if isinstance(files, list) else (info,)
+
+    for index, file_info in enumerate(file_entries):
+        if not isinstance(file_info, dict):
+            continue
+
+        path = file_info.get(b"path")
+        if isinstance(path, (list, tuple)) and path:
+            encoded_title = path[-1]
+        else:
+            encoded_title = file_info.get(b"name")
+        size = file_info.get(b"length")
+        if not isinstance(encoded_title, bytes) or not isinstance(size, int):
+            continue
+
+        try:
+            title = encoded_title.decode()
+        except UnicodeDecodeError:
+            continue
+        yield index, title, size
+
+
 def _build_torrent_metadata_payload(info_hash: str, sources, file_specs) -> dict:
     return {
         "info_hash": info_hash,
@@ -385,20 +409,10 @@ def extract_torrent_metadata(content: bytes):
             announce = ""
         if announce:
             announce_list.append(announce)
-        files = info[b"files"] if b"files" in info else [info]
         return _build_torrent_metadata_payload(
             info_hash,
             announce_list,
-            (
-                (
-                    index,
-                    file_info[b"path"][-1].decode()
-                    if b"path" in file_info
-                    else file_info[b"name"].decode(),
-                    file_info[b"length"],
-                )
-                for index, file_info in enumerate(files)
-            ),
+            _iter_bencoded_file_specs(info),
         )
     except Exception as e:
         logger.debug(f"Failed to extract torrent metadata: {e}")

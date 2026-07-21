@@ -45,6 +45,33 @@ class TorrentMetadataTests(unittest.TestCase):
         self.assertTrue(is_video("Movie.mKv"))
         self.assertFalse(is_video("Movie.txt"))
 
+    def test_skips_corrupt_file_entries_without_dropping_valid_files(self):
+        info = {
+            b"name": b"collection",
+            b"files": [
+                {b"path": [b"valid.mkv"], b"length": 100},
+                {b"path": [b"invalid-\xff.mkv"], b"length": 200},
+                {b"path": [], b"length": 300},
+                {b"path": [b"missing-size.mp4"]},
+                {b"path": [b"notes.txt"], b"length": 400},
+                {b"path": [b"also-valid.MP4"], b"length": 500},
+            ],
+        }
+        content = bencodepy.encode({b"info": info})
+
+        actual = extract_torrent_metadata(content)
+
+        self.assertEqual(
+            actual["info_hash"], hashlib.sha1(bencodepy.encode(info)).hexdigest()
+        )
+        self.assertEqual(
+            actual["files"],
+            [
+                {"index": 0, "title": "valid.mkv", "size": 100},
+                {"index": 5, "title": "also-valid.MP4", "size": 500},
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
