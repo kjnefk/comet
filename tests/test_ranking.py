@@ -81,6 +81,19 @@ class RankWorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "boom"):
                 rank_worker(torrents, SettingsModel(), DefaultRanking(), 50, 0, False)
 
+    def test_size_filter_is_applied_before_batch_ranking(self):
+        title = "The.Matrix.1999.1080p.BluRay.x264"
+        torrents = {
+            "1" * 40: {"title": title, "parsed": parse(title), "size": 1_000_000},
+            "2" * 40: {"title": title, "parsed": parse(title), "size": 2_000_000},
+        }
+
+        actual = rank_worker(
+            torrents, SettingsModel(), DefaultRanking(), 50, 1_500_000, False
+        )
+
+        self.assertEqual(set(actual), {"1" * 40})
+
 
 if __name__ == "__main__":
     unittest.main()
