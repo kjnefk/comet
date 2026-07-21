@@ -1,4 +1,5 @@
 from RTN import Torrent, check_fetch_and_rank, sort_torrents
+from RTN.exceptions import GarbageTorrent
 
 
 def rank_worker(
@@ -36,7 +37,7 @@ def rank_worker(
                     lev_ratio=0.0,
                 )
             )
-        except Exception:
+        except GarbageTorrent:
             pass
 
     return sort_torrents(ranked_torrents, max_results_per_resolution)

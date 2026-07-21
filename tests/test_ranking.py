@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from RTN import (
     DefaultRanking,
@@ -51,6 +52,34 @@ class RankWorkerTests(unittest.TestCase):
         actual = rank_worker(torrents, settings, ranking, 50, 0, True)
 
         self.assertEqual(actual, sort_torrents(expected, 50))
+
+    def test_invalid_infohash_is_ignored(self):
+        title = "The.Matrix.1999.1080p.BluRay.x264"
+        torrents = {
+            "invalid": {
+                "title": title,
+                "parsed": parse(title),
+                "size": 1_000_000,
+            }
+        }
+
+        actual = rank_worker(torrents, SettingsModel(), DefaultRanking(), 50, 0, False)
+
+        self.assertEqual(actual, {})
+
+    def test_unexpected_torrent_error_is_not_masked(self):
+        title = "The.Matrix.1999.1080p.BluRay.x264"
+        torrents = {
+            "1" * 40: {
+                "title": title,
+                "parsed": parse(title),
+                "size": 1_000_000,
+            }
+        }
+
+        with patch("comet.services.ranking.Torrent", side_effect=RuntimeError("boom")):
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                rank_worker(torrents, SettingsModel(), DefaultRanking(), 50, 0, False)
 
 
 if __name__ == "__main__":
