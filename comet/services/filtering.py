@@ -21,7 +21,7 @@ else:
 
 
 def quick_alias_match(text_normalized: str, ez_aliases_normalized: list[str]):
-    return any(alias in text_normalized for alias in ez_aliases_normalized)
+    return any(alias and alias in text_normalized for alias in ez_aliases_normalized)
 
 
 # Bracketed metadata (e.g. "[1999, BDRip]", "(S2)", "{HEVC}") that pollutes a
