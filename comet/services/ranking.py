@@ -1,4 +1,4 @@
-from RTN import Torrent, check_fetch, get_rank, sort_torrents
+from RTN import Torrent, check_fetch_and_rank, sort_torrents
 
 
 def rank_worker(
@@ -19,8 +19,7 @@ def rank_worker(
         parsed = torrent["parsed"]
         raw_title = torrent["title"]
 
-        is_fetchable, failed_keys = check_fetch(parsed, rtn_settings)
-        rank = get_rank(parsed, rtn_settings, rtn_ranking)
+        is_fetchable, _, rank = check_fetch_and_rank(parsed, rtn_settings, rtn_ranking)
 
         if remove_trash:
             if not is_fetchable or rank < rtn_settings.options["remove_ranks_under"]:
