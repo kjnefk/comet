@@ -64,7 +64,7 @@ def is_video(title: str):
         ".wmv",
         ".yuv",
     )
-    return title.endswith(video_extensions)
+    return title.lower().endswith(video_extensions)
 
 
 def default_dump(obj):

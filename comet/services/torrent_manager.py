@@ -22,11 +22,15 @@ from torf import Magnet
 from comet.cometnet import CometNetService, get_active_backend
 from comet.cometnet.protocol import TorrentMetadata
 from comet.core.constants import TORRENT_TIMEOUT
-from comet.core.database import (IS_SQLITE, NULL_SCOPE_SENTINEL,
-                                 build_distinct_from_predicate,
-                                 build_json_list_membership_predicate,
-                                 build_upsert_assignments, encode_json_param,
-                                 normalize_scope_value)
+from comet.core.database import (
+    IS_SQLITE,
+    NULL_SCOPE_SENTINEL,
+    build_distinct_from_predicate,
+    build_json_list_membership_predicate,
+    build_upsert_assignments,
+    encode_json_param,
+    normalize_scope_value,
+)
 from comet.core.logger import logger
 from comet.core.models import database, settings
 from comet.utils.formatting import normalize_info_hash
@@ -151,7 +155,9 @@ def _normalize_sources(sources) -> list[str]:
         values = list(sources)
     else:
         return []
-    return _dedupe_strings(values)
+    return _dedupe_strings(
+        [source for source in values if isinstance(source, str) and source]
+    )
 
 
 def _get_cached_normalized_sources(
@@ -358,10 +364,25 @@ def extract_torrent_metadata(content: bytes):
         info = torrent_data[b"info"]
         info_hash = hashlib.sha1(bencodepy.encode(info)).hexdigest()
 
-        announce_list = [
-            tracker[0].decode() for tracker in torrent_data.get(b"announce-list", [])
-        ]
-        announce = torrent_data.get(b"announce", b"").decode()
+        announce_list = []
+        for tier in torrent_data.get(b"announce-list", []):
+            if not isinstance(tier, (list, tuple)):
+                continue
+            for tracker in tier:
+                if not isinstance(tracker, bytes):
+                    continue
+                try:
+                    announce_list.append(tracker.decode())
+                except UnicodeDecodeError:
+                    continue
+
+        announce_value = torrent_data.get(b"announce", b"")
+        try:
+            announce = (
+                announce_value.decode() if isinstance(announce_value, bytes) else ""
+            )
+        except UnicodeDecodeError:
+            announce = ""
         if announce:
             announce_list.append(announce)
         files = info[b"files"] if b"files" in info else [info]
