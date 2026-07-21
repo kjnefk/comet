@@ -124,6 +124,19 @@ RETRYABLE_DB_ERROR_MARKERS = (
     "could not serialize access",
     "serialization failure",
 )
+ROW_SPECIFIC_DB_SQLSTATE_PREFIXES = ("22", "23")
+ROW_SPECIFIC_DB_ERROR_MARKERS = (
+    "check constraint",
+    "constraint failed",
+    "datatype mismatch",
+    "foreign key constraint",
+    "invalid input syntax",
+    "malformed json",
+    "not null constraint",
+    "out of range",
+    "unique constraint",
+    "value too long",
+)
 
 
 def _json_dumps(value) -> str:
@@ -1394,10 +1407,11 @@ class TorrentUpdateQueue:
                 batch_items = await self._finalize_batch_items(batch_keys)
 
                 updated_at = 0.0
+                persisted_items = []
                 try:
                     if batch_items:
                         updated_at = time.time()
-                        await _execute_batched_upsert(
+                        persisted_items = await _execute_isolated_batched_upsert(
                             batch_items, updated_at=updated_at
                         )
                 except Exception as e:
@@ -1405,8 +1419,8 @@ class TorrentUpdateQueue:
                     if _is_retryable_db_error(e):
                         await self._requeue_batch_items(batch_items)
                 else:
-                    if batch_items:
-                        await self._enqueue_broadcast_items(batch_items, updated_at)
+                    if persisted_items:
+                        await self._enqueue_broadcast_items(persisted_items, updated_at)
                 finally:
                     for _ in batch_keys:
                         self.queue.task_done()
@@ -1631,12 +1645,19 @@ def _build_batched_params(
     return params
 
 
-def _is_retryable_db_error(exc: Exception) -> bool:
+def _iter_exception_chain(exc: Exception) -> Iterator[Exception]:
     seen = set()
     current = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
+        yield current
+        current = getattr(current, "__cause__", None) or getattr(
+            current, "__context__", None
+        )
 
+
+def _is_retryable_db_error(exc: Exception) -> bool:
+    for current in _iter_exception_chain(exc):
         sqlstate = getattr(current, "sqlstate", None) or getattr(
             current, "pgcode", None
         )
@@ -1646,11 +1667,22 @@ def _is_retryable_db_error(exc: Exception) -> bool:
         error_message = str(current).lower()
         if any(marker in error_message for marker in RETRYABLE_DB_ERROR_MARKERS):
             return True
+    return False
 
-        current = getattr(current, "__cause__", None) or getattr(
-            current, "__context__", None
+
+def _is_row_specific_db_error(exc: Exception) -> bool:
+    for current in _iter_exception_chain(exc):
+        sqlstate = getattr(current, "sqlstate", None) or getattr(
+            current, "pgcode", None
         )
+        if isinstance(sqlstate, str) and sqlstate.startswith(
+            ROW_SPECIFIC_DB_SQLSTATE_PREFIXES
+        ):
+            return True
 
+        error_message = str(current).lower()
+        if any(marker in error_message for marker in ROW_SPECIFIC_DB_ERROR_MARKERS):
+            return True
     return False
 
 
@@ -1673,6 +1705,31 @@ async def _execute_batched_upsert(rows: list[_TorrentUpdate], *, updated_at: flo
                     parsed_json_cache=parsed_json_cache,
                 ),
             )
+
+
+async def _execute_isolated_batched_upsert(
+    rows: list[_TorrentUpdate], *, updated_at: float
+) -> list[_TorrentUpdate]:
+    try:
+        await _execute_batched_upsert(rows, updated_at=updated_at)
+        return rows
+    except Exception as exc:
+        if not _is_row_specific_db_error(exc):
+            raise
+        if len(rows) == 1:
+            logger.warning(
+                f"Dropping invalid torrent update row (key={rows[0].row_key}): {exc}"
+            )
+            return []
+
+    midpoint = len(rows) // 2
+    left = await _execute_isolated_batched_upsert(
+        rows[:midpoint], updated_at=updated_at
+    )
+    right = await _execute_isolated_batched_upsert(
+        rows[midpoint:], updated_at=updated_at
+    )
+    return [*left, *right]
 
 
 torrent_update_queue = TorrentUpdateQueue()
