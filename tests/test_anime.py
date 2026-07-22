@@ -103,3 +103,47 @@ class AnimeMapperTests(unittest.IsolatedAsyncioTestCase):
         mapping.assert_awaited_once_with([], [])
         overrides.assert_awaited_once_with([])
         self.assertIsInstance(transaction.exit_error, RuntimeError)
+
+    async def test_kitsu_cache_load_is_atomic_on_invalid_row(self):
+        mapper = AnimeMapper()
+        mapper.anime_imdb_ids = {"tt-old"}
+        mapper._kitsu_mapping_cache = {"old": {"imdb_id": "tt-old"}}
+        mapper._imdb_kitsu_mapping_cache = {"tt-old": ["old"]}
+        kitsu_rows = [
+            {
+                "source_id": "new",
+                "target_id": "tt-new",
+                "from_season": 2,
+                "from_episode": None,
+            },
+            {"source_id": "broken"},
+        ]
+
+        with (
+            patch(
+                "comet.services.anime.database.fetch_all",
+                side_effect=[[{"provider_id": "tt-new"}], kitsu_rows],
+            ),
+            self.assertRaises(KeyError),
+        ):
+            await mapper._load_mapping_caches()
+
+        self.assertEqual(mapper.anime_imdb_ids, {"tt-old"})
+        self.assertEqual(
+            mapper._kitsu_mapping_cache,
+            {"old": {"imdb_id": "tt-old"}},
+        )
+        self.assertEqual(mapper._imdb_kitsu_mapping_cache, {"tt-old": ["old"]})
+
+    async def test_provider_id_load_is_atomic_on_invalid_row(self):
+        mapper = AnimeMapper()
+        mapper.anime_imdb_ids = {"tt-old"}
+        rows = [{"provider_id": "tt-new"}, {}]
+
+        with (
+            patch("comet.services.anime.database.fetch_all", return_value=rows),
+            self.assertRaises(KeyError),
+        ):
+            await mapper._load_mapping_caches()
+
+        self.assertEqual(mapper.anime_imdb_ids, {"tt-old"})

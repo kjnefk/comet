@@ -265,48 +265,50 @@ class AnimeMapper:
 
         return (time.time() - float(last_refresh)) >= interval
 
-    async def _load_provider_ids(self):
-        try:
-            query = "SELECT provider_id FROM anime_ids WHERE provider = 'imdb'"
-            rows = await database.fetch_all(query)
+    async def _read_provider_ids(self):
+        query = "SELECT provider_id FROM anime_ids WHERE provider = 'imdb'"
+        rows = await database.fetch_all(query)
+        return {row["provider_id"] for row in rows}
 
-            self.anime_imdb_ids = {row["provider_id"] for row in rows}
-        except Exception as e:
-            logger.error(f"Failed to load anime provider IDs: {e}")
+    async def _read_kitsu_mapping_caches(self):
+        rows = await database.fetch_all(
+            """
+            SELECT source_id, target_id, from_season, from_episode
+            FROM anime_provider_overrides
+            WHERE source_provider = 'kitsu'
+              AND target_provider = 'imdb'
+              AND (
+                    (from_episode IS NOT NULL AND from_episode > 1)
+                    OR from_season IS NOT NULL
+                  )
+            """
+        )
 
-    async def _load_kitsu_mapping_cache(self):
-        try:
-            rows = await database.fetch_all(
-                """
-                SELECT source_id, target_id, from_season, from_episode
-                FROM anime_provider_overrides
-                WHERE source_provider = 'kitsu'
-                  AND target_provider = 'imdb'
-                  AND (
-                        (from_episode IS NOT NULL AND from_episode > 1)
-                        OR from_season IS NOT NULL
-                      )
-                """
-            )
+        kitsu_mapping_cache = {}
+        imdb_kitsu_mapping_cache = {}
+        for row in rows:
+            kitsu_id = row["source_id"]
+            imdb_id = row["target_id"]
 
-            self._kitsu_mapping_cache.clear()
-            self._imdb_kitsu_mapping_cache.clear()
+            kitsu_mapping_cache[str(kitsu_id)] = {
+                "imdb_id": imdb_id,
+                "from_season": row["from_season"],
+                "from_episode": row["from_episode"],
+            }
 
-            for row in rows:
-                kitsu_id = row["source_id"]
-                imdb_id = row["target_id"]
+            imdb_kitsu_mapping_cache.setdefault(str(imdb_id), []).append(str(kitsu_id))
 
-                self._kitsu_mapping_cache[str(kitsu_id)] = {
-                    "imdb_id": imdb_id,
-                    "from_season": row["from_season"],
-                    "from_episode": row["from_episode"],
-                }
+        return kitsu_mapping_cache, imdb_kitsu_mapping_cache
 
-                self._imdb_kitsu_mapping_cache.setdefault(str(imdb_id), []).append(
-                    str(kitsu_id)
-                )
-        except Exception as e:
-            logger.warning(f"Failed to load Kitsu-IMDB mapping cache: {e}")
+    async def _load_mapping_caches(self):
+        anime_imdb_ids = await self._read_provider_ids()
+        (
+            kitsu_mapping_cache,
+            imdb_kitsu_mapping_cache,
+        ) = await self._read_kitsu_mapping_caches()
+        self.anime_imdb_ids = anime_imdb_ids
+        self._kitsu_mapping_cache = kitsu_mapping_cache
+        self._imdb_kitsu_mapping_cache = imdb_kitsu_mapping_cache
 
     async def _needs_refresh(self) -> bool:
         kitsu_count = await database.fetch_val(
@@ -359,8 +361,11 @@ class AnimeMapper:
         if not count or count <= 0:
             return False
 
-        await self._load_provider_ids()
-        await self._load_kitsu_mapping_cache()
+        try:
+            await self._load_mapping_caches()
+        except Exception as exc:
+            logger.warning(f"Failed to load anime mapping caches: {exc}")
+            return False
 
         if schedule_refresh and await self._needs_refresh():
             self._schedule_background_refresh()
@@ -457,8 +462,7 @@ class AnimeMapper:
                     del anime_list
                     trim_process_memory()
 
-                    await self._load_provider_ids()
-                    await self._load_kitsu_mapping_cache()
+                    await self._load_mapping_caches()
 
                     self.loaded = True
                     logger.log(
