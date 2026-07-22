@@ -36,6 +36,131 @@ class _Peer:
 
 
 class CometNetTransportTests(unittest.IsolatedAsyncioTestCase):
+    def test_constructor_rejects_non_current_capacity_values(self):
+        malformed = [
+            {"listen_port": True},
+            {"listen_port": 0},
+            {"listen_port": 65536},
+            {"max_peers": True},
+            {"max_peers": 0},
+            {"advertise_url": ""},
+        ]
+        for arguments in malformed:
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(ValueError):
+                    ConnectionManager(_Identity(), **arguments)
+
+    async def test_outbound_handshake_reserves_global_capacity(self):
+        manager = ConnectionManager(_Identity(), max_peers=1)
+        manager._running = True
+        connect_started = asyncio.Event()
+        release_connect = asyncio.Event()
+        websocket = AsyncMock()
+
+        async def connect(*args, **kwargs):
+            del args, kwargs
+            connect_started.set()
+            await release_connect.wait()
+            return websocket
+
+        with (
+            patch("comet.cometnet.transport.websockets.connect", new=connect),
+            patch.object(
+                manager, "_perform_handshake", new=AsyncMock(return_value="peer")
+            ) as handshake,
+        ):
+            first = asyncio.create_task(manager.connect_to_peer("wss://one"))
+            await connect_started.wait()
+            second = await manager.connect_to_peer("wss://two")
+            release_connect.set()
+            self.assertEqual(await first, "peer")
+
+        self.assertIsNone(second)
+        handshake.assert_awaited_once()
+        self.assertEqual(manager._pending_connections, 0)
+
+    async def test_inbound_handshake_reserves_global_capacity(self):
+        manager = ConnectionManager(_Identity(), max_peers=1)
+        manager._running = True
+        handshake_started = asyncio.Event()
+        release_handshake = asyncio.Event()
+        first_socket = AsyncMock()
+        second_socket = AsyncMock()
+
+        async def handshake(*args, **kwargs):
+            del args, kwargs
+            handshake_started.set()
+            await release_handshake.wait()
+            return "peer"
+
+        with patch.object(manager, "_perform_handshake", new=handshake):
+            first = asyncio.create_task(
+                manager.handle_incoming_connection(first_socket, "203.0.113.1")
+            )
+            await handshake_started.wait()
+            second = await manager.handle_incoming_connection(
+                second_socket, "203.0.113.2"
+            )
+            release_handshake.set()
+            self.assertEqual(await first, "peer")
+
+        self.assertIsNone(second)
+        second_socket.close.assert_awaited_once()
+        self.assertEqual(manager._pending_connections, 0)
+
+    async def test_cancelled_inbound_handshake_releases_every_reservation(self):
+        manager = ConnectionManager(_Identity(), max_peers=1)
+        manager._running = True
+        websocket = AsyncMock()
+        started = asyncio.Event()
+
+        async def handshake(*args, **kwargs):
+            del args, kwargs
+            started.set()
+            await asyncio.Event().wait()
+
+        with patch.object(manager, "_perform_handshake", new=handshake):
+            task = asyncio.create_task(
+                manager.handle_incoming_connection(websocket, "203.0.113.1")
+            )
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        self.assertEqual(manager._pending_connections, 0)
+        self.assertEqual(manager._connections_per_ip, {})
+        websocket.close.assert_awaited_once()
+
+    async def test_cancelled_outbound_handshake_closes_and_releases(self):
+        manager = ConnectionManager(_Identity(), max_peers=1)
+        manager._running = True
+        websocket = AsyncMock()
+        started = asyncio.Event()
+
+        async def connect(*args, **kwargs):
+            del args, kwargs
+            return websocket
+
+        async def handshake(*args, **kwargs):
+            del args, kwargs
+            started.set()
+            await asyncio.Event().wait()
+
+        with (
+            patch("comet.cometnet.transport.websockets.connect", new=connect),
+            patch.object(manager, "_perform_handshake", new=handshake),
+        ):
+            task = asyncio.create_task(manager.connect_to_peer("wss://peer"))
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        self.assertEqual(manager._pending_connections, 0)
+        self.assertEqual(manager._connecting, set())
+        websocket.close.assert_awaited_once()
+
     async def test_receive_loop_rejects_unauthenticated_control_message(self):
         manager = ConnectionManager(_Identity())
         manager._running = True
