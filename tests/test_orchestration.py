@@ -6,6 +6,27 @@ from comet.services.orchestration import TorrentManager, scraper_manager
 
 
 class TorrentOrchestrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_filter_manager_logs_scraper_response_time(self):
+        manager = TorrentManager(
+            media_type="movie",
+            media_full_id="tt123",
+            media_only_id="tt123",
+            title="Movie",
+            year=2026,
+            year_end=None,
+            season=None,
+            episode=None,
+            aliases={},
+            remove_adult_content=False,
+        )
+
+        with patch("comet.services.orchestration.logger.log") as log:
+            await manager.filter_manager("Example", [], response_time=0.875)
+
+        log.assert_called_once_with(
+            "SCRAPER", "Scraper Example found 0 torrents. Took 0.88s."
+        )
+
     async def test_filter_manager_isolates_invalid_scraper_results(self):
         manager = TorrentManager(
             media_type="movie",

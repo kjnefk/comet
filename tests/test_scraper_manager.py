@@ -1,12 +1,40 @@
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from comet.scrapers.manager import ScraperManager, network_manager, settings
 from comet.scrapers.models import ScrapeRequest
 
 
 class ScraperManagerTaskTests(unittest.IsolatedAsyncioTestCase):
+    async def test_scrape_wrapper_reports_monotonic_response_time(self):
+        manager = ScraperManager.__new__(ScraperManager)
+        scraper = AsyncMock()
+        scraper.scrape.return_value = [{"title": "Result"}]
+        request = ScrapeRequest(
+            media_type="movie",
+            media_id="tt123",
+            media_only_id="tt123",
+            title="Title",
+            year=2024,
+            year_end=None,
+            season=None,
+            episode=None,
+            context="live",
+        )
+
+        with patch(
+            "comet.scrapers.manager.time.perf_counter",
+            side_effect=(10.0, 10.875),
+        ):
+            name, results, response_time = await manager._scrape_wrapper(
+                "Example", scraper, request
+            )
+
+        self.assertEqual(name, "Example")
+        self.assertEqual(results, [{"title": "Result"}])
+        self.assertEqual(response_time, 0.875)
+
     async def test_closing_results_cancels_unfinished_scrapers(self):
         slow_started = asyncio.Event()
         slow_cancelled = asyncio.Event()

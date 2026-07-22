@@ -3,6 +3,7 @@ import importlib
 import inspect
 import os
 import pkgutil
+import time
 from typing import Dict
 
 from comet.core.logger import logger
@@ -55,11 +56,13 @@ class ScraperManager:
     async def _scrape_wrapper(
         self, name: str, scraper: BaseScraper, request: ScrapeRequest
     ):
+        started_at = time.perf_counter()
         try:
-            return name, await scraper.scrape(request)
+            results = await scraper.scrape(request)
         except Exception as e:
             logger.warning(f"Scraper {name} failed: {e}")  # todo: better error handling
-            return name, []
+            results = []
+        return name, results, time.perf_counter() - started_at
 
     @staticmethod
     def _resolve_url_for_context(url: str, context: str):

@@ -135,8 +135,10 @@ class TorrentManager:
             context=self.context,
         )
 
-        async for scraper_name, results in scraper_manager.scrape_all(request):
-            await self.filter_manager(scraper_name, results)
+        async for scraper_name, results, response_time in scraper_manager.scrape_all(
+            request
+        ):
+            await self.filter_manager(scraper_name, results, response_time)
 
         await self.cache_torrents()
 
@@ -291,15 +293,23 @@ class TorrentManager:
         if file_infos:
             await torrent_update_queue.add_torrent_infos(file_infos, self.media_only_id)
 
-    async def filter_manager(self, scraper_name: str, torrents: object):
+    async def filter_manager(
+        self,
+        scraper_name: str,
+        torrents: object,
+        response_time: float | None = None,
+    ):
+        timing = f" Took {response_time:.2f}s." if response_time is not None else ""
         if not isinstance(torrents, list):
             logger.warning(
-                f"Scraper {scraper_name} returned an invalid result container."
+                f"Scraper {scraper_name} returned an invalid result container.{timing}"
             )
             return
 
         if len(torrents) == 0:
-            logger.log("SCRAPER", f"Scraper {scraper_name} found 0 torrents.")
+            logger.log(
+                "SCRAPER", f"Scraper {scraper_name} found 0 torrents.{timing}"
+            )
             return
 
         valid_torrents = [
@@ -323,7 +333,8 @@ class TorrentManager:
 
         logger.log(
             "SCRAPER",
-            f"Scraper {scraper_name} found {len(torrents)} torrents, {len(new_torrents)} new.",
+            f"Scraper {scraper_name} found {len(torrents)} torrents, "
+            f"{len(new_torrents)} new.{timing}",
         )
 
         if not new_torrents:
