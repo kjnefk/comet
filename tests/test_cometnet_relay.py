@@ -75,26 +75,52 @@ class CometNetRelayTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await task)
         self.assertEqual(relay._batch, [])
 
-    async def test_stop_drains_existing_flush_before_closing_session(self):
+    async def test_threshold_flushes_are_serialized_by_owned_worker(self):
         relay = CometNetRelay("http://relay")
         relay._running = True
         session = FakeSession()
         relay._session = session
-        finished = asyncio.Event()
+        relay.batch_size = 2
+        relay.batch_interval = 60
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        second_finished = asyncio.Event()
+        active = 0
+        peak = 0
+        batches = []
 
-        async def active_flush():
+        async def send_batch(torrents):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
             try:
-                await asyncio.sleep(0)
+                batches.append([item["info_hash"] for item in torrents])
+                if len(batches) == 1:
+                    first_started.set()
+                    await release_first.wait()
+                else:
+                    second_finished.set()
             finally:
-                finished.set()
+                active -= 1
+            return len(torrents)
 
-        task = asyncio.create_task(active_flush())
-        relay._flush_tasks.add(task)
+        relay._send_batch = send_batch
+        relay._batch_task = asyncio.create_task(relay._batch_flush_loop())
+        for suffix in range(4):
+            await relay.relay_torrent(f"{suffix:040x}", "title", 1)
 
+        await first_started.wait()
+        for suffix in range(4, 8):
+            await relay.relay_torrent(f"{suffix:040x}", "title", 1)
+        release_first.set()
+        await second_finished.wait()
         await relay.stop()
 
-        self.assertTrue(finished.is_set())
-        self.assertFalse(task.cancelled())
+        self.assertEqual(peak, 1)
+        self.assertEqual(
+            [item for batch in batches for item in batch],
+            [f"{i:040x}" for i in range(8)],
+        )
         self.assertTrue(session.closed)
 
     async def test_get_pools_requires_current_standalone_endpoint(self):

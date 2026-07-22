@@ -8,7 +8,7 @@ dedicated CometNet standalone service.
 
 import asyncio
 import traceback
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 
@@ -42,8 +42,8 @@ class CometNetRelay(CometNetBackend):
         self._session: Optional[aiohttp.ClientSession] = None
         self._batch: List[Dict] = []
         self._batch_lock = asyncio.Lock()
+        self._flush_event = asyncio.Event()
         self._batch_task: Optional[asyncio.Task] = None
-        self._flush_tasks: Set[asyncio.Task] = set()
         self._running = False
 
         self.batch_size = 50
@@ -75,6 +75,7 @@ class CometNetRelay(CometNetBackend):
             headers=headers,
         )
 
+        self._flush_event.clear()
         self._batch_task = asyncio.create_task(self._batch_flush_loop())
 
         logger.log("COMETNET", f"Relay client started - Target: {self.relay_url}")
@@ -90,10 +91,6 @@ class CometNetRelay(CometNetBackend):
             except asyncio.CancelledError:
                 pass
             self._batch_task = None
-
-        if self._flush_tasks:
-            await asyncio.gather(*tuple(self._flush_tasks), return_exceptions=True)
-            self._flush_tasks.clear()
 
         await self._flush_batch()
 
@@ -148,9 +145,7 @@ class CometNetRelay(CometNetBackend):
             self._batch.append(torrent_data)
 
             if len(self._batch) >= self.batch_size:
-                task = asyncio.create_task(self._flush_batch())
-                self._flush_tasks.add(task)
-                task.add_done_callback(self._flush_tasks.discard)
+                self._flush_event.set()
 
         return True
 
@@ -158,7 +153,13 @@ class CometNetRelay(CometNetBackend):
         """Periodically flush the batch."""
         while self._running:
             try:
-                await asyncio.sleep(self.batch_interval)
+                try:
+                    await asyncio.wait_for(
+                        self._flush_event.wait(), timeout=self.batch_interval
+                    )
+                except TimeoutError:
+                    pass
+                self._flush_event.clear()
                 await self._flush_batch()
             except asyncio.CancelledError:
                 break
@@ -579,9 +580,7 @@ class CometNetRelay(CometNetBackend):
             self._batch.extend(batch_data)
 
             if len(self._batch) >= self.batch_size:
-                task = asyncio.create_task(self._flush_batch())
-                self._flush_tasks.add(task)
-                task.add_done_callback(self._flush_tasks.discard)
+                self._flush_event.set()
 
     async def broadcast_torrent(self, metadata) -> None:
         """Broadcast a torrent to the network (via relay)."""
