@@ -1,3 +1,4 @@
+import asyncio
 import time
 import uuid
 
@@ -13,9 +14,17 @@ from comet.services.streaming.wrapper import monitored_handle_stream_request
 
 
 async def on_stream_end(connection_id: str, ip: str):
+    cancellation = None
     try:
         await bandwidth_monitor.end_connection(connection_id)
+    except asyncio.CancelledError as exc:
+        cancellation = exc
+    except Exception as e:
+        logger.warning(
+            f"Error ending bandwidth tracking for connection {connection_id}: {e}"
+        )
 
+    try:
         await database.execute(
             "DELETE FROM active_connections WHERE id = :connection_id AND ip = :ip",
             {"connection_id": connection_id, "ip": ip},
@@ -25,8 +34,11 @@ async def on_stream_end(connection_id: str, ip: str):
         )
     except Exception as e:
         logger.warning(
-            f"Error handling stream end for connection {connection_id} from IP {ip}: {e}"
+            f"Error deleting stream connection {connection_id} from IP {ip}: {e}"
         )
+
+    if cancellation is not None:
+        raise cancellation
 
 
 async def check_ip_connections(ip: str):
@@ -63,7 +75,19 @@ async def add_active_connection(media_id: str, ip: str):
         },
     )
 
-    await bandwidth_monitor.start_connection(connection_id, ip, media_id)
+    try:
+        await bandwidth_monitor.start_connection(connection_id, ip, media_id)
+    except BaseException:
+        try:
+            await database.execute(
+                "DELETE FROM active_connections WHERE id = :connection_id AND ip = :ip",
+                {"connection_id": connection_id, "ip": ip},
+            )
+        except Exception as cleanup_error:
+            logger.warning(
+                f"Error rolling back stream connection {connection_id}: {cleanup_error}"
+            )
+        raise
 
     logger.log(
         "STREAM",
@@ -73,10 +97,15 @@ async def add_active_connection(media_id: str, ip: str):
 
 
 async def combined_background_tasks(
-    connection_id: str, ip: str, streamer_close_task: BackgroundTask
+    connection_id: str,
+    ip: str,
+    streamer_close_task: BackgroundTask | None,
 ):
-    await streamer_close_task()
-    await on_stream_end(connection_id, ip)
+    try:
+        if streamer_close_task is not None:
+            await streamer_close_task()
+    finally:
+        await on_stream_end(connection_id, ip)
 
 
 async def custom_handle_stream_request(
@@ -94,9 +123,13 @@ async def custom_handle_stream_request(
 
     connection_id = await add_active_connection(media_id, ip)
 
-    response = await monitored_handle_stream_request(
-        method, video_url, proxy_headers, connection_id
-    )
+    try:
+        response = await monitored_handle_stream_request(
+            method, video_url, proxy_headers, connection_id
+        )
+    except BaseException:
+        await on_stream_end(connection_id, ip)
+        raise
 
     original_background_task = response.background
     response.background = BackgroundTask(
