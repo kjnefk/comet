@@ -884,10 +884,7 @@ class CometNetService(CometNetBackend):
     async def _handle_received_torrent(self, metadata: TorrentMetadata) -> None:
         """Handle a torrent received from the network."""
         if self._save_torrent_callback:
-            try:
-                await self._save_torrent_callback(metadata)
-            except Exception:
-                pass
+            await self._save_torrent_callback(metadata)
 
     async def _handle_torrent_announce(
         self, sender_id: str, message: AnyMessage

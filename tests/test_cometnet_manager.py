@@ -6,6 +6,18 @@ from comet.cometnet.manager import CometNetService
 
 
 class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_received_torrent_save_failure_propagates_to_gossip(self):
+        service = CometNetService(enabled=True)
+
+        async def fail_save(metadata):
+            del metadata
+            raise RuntimeError("database unavailable")
+
+        service.set_save_torrent_callback(fail_save)
+
+        with self.assertRaisesRegex(RuntimeError, "database unavailable"):
+            await service._handle_received_torrent(object())
+
     async def test_shutdown_continues_after_cleanup_failures(self):
         service = CometNetService(enabled=True)
         service._running = True

@@ -1,8 +1,10 @@
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from comet.cometnet.gossip import GossipEngine
+from comet.cometnet.protocol import TorrentAnnounce, TorrentMetadata
+from comet.cometnet.reputation import ReputationStore
 
 
 def _engine_with_queue(*items):
@@ -16,6 +18,37 @@ def _engine_with_queue(*items):
 
 
 class CometNetGossipTests(unittest.IsolatedAsyncioTestCase):
+    async def test_existing_hash_is_not_repropagated_without_verification(self):
+        info_hash = "a" * 40
+        engine = GossipEngine(object(), ReputationStore())
+
+        async def existing(hashes):
+            self.assertEqual(hashes, [info_hash])
+            return {info_hash}
+
+        engine._check_torrents_exist = existing
+        announce = TorrentAnnounce(
+            sender_id="sender",
+            torrents=[
+                TorrentMetadata(
+                    info_hash=info_hash,
+                    title="Unverified metadata",
+                    size=1,
+                    tracker="peer",
+                    imdb_id="tt123",
+                )
+            ],
+        )
+
+        with patch.object(
+            engine, "_repropagate", new=AsyncMock(return_value=1)
+        ) as repropagate:
+            await engine.handle_announce("sender", announce)
+
+        repropagate.assert_not_awaited()
+        self.assertEqual(engine.stats["validation_skipped_exists"], 1)
+        self.assertEqual(engine.stats["duplicates_ignored"], 1)
+
     async def test_stop_cancels_both_workers_and_clears_references(self):
         engine = GossipEngine(object(), None)
         engine._running = True

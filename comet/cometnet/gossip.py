@@ -289,14 +289,10 @@ class GossipEngine:
                 continue
 
             # Check if we already have this torrent
-            # If so, we can skip expensive cryptographic validation
+            # Never re-propagate unverified metadata for an existing hash.
             if torrent.info_hash in existing_hashes:
                 self.stats["validation_skipped_exists"] += 1
-                if announce.ttl > 1 and self.contribution_mode in (
-                    "full",
-                    "consumer",
-                ):
-                    torrents_to_repropagate.append(torrent)
+                self.stats["duplicates_ignored"] += 1
                 continue
 
             # Validate torrent structure
@@ -384,8 +380,10 @@ class GossipEngine:
                     await self._save_torrent(torrent)
                     self.stats["torrents_received"] += 1
                     saved_count += 1
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        f"Failed to save CometNet torrent {torrent.info_hash}: {exc}"
+                    )
 
             if saved_count > 0:
                 logger.log(
