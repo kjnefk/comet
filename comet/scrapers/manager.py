@@ -168,13 +168,20 @@ class ScraperManager:
                         self._scrape_wrapper(scraper_name_clean, scraper, request)
                     )
 
-        for future in asyncio.as_completed(tasks):
-            try:
-                yield await future
-            except Exception as e:
-                logger.error(
-                    f"Error during scraping: {e}"
-                )  # todo: better error handling
+        scraper_tasks = [asyncio.create_task(task) for task in tasks]
+        try:
+            for future in asyncio.as_completed(scraper_tasks):
+                try:
+                    yield await future
+                except Exception as e:
+                    logger.error(
+                        f"Error during scraping: {e}"
+                    )  # todo: better error handling
+        finally:
+            for task in scraper_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*scraper_tasks, return_exceptions=True)
 
 
 scraper_manager = ScraperManager()
