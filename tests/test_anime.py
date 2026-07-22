@@ -31,6 +31,18 @@ class AnimeMapperTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(aliases, {"original": ["Main"], "ez": ["Alt"]})
 
+    async def test_media_type_uses_persisted_anime_type(self):
+        mapper = AnimeMapper()
+
+        with patch.object(mapper, "_get_entry_data", return_value={"type": "Movie"}):
+            self.assertEqual(await mapper.get_media_type("kitsu:1"), "movie")
+
+        with patch.object(mapper, "_get_entry_data", return_value={"type": "TV"}):
+            self.assertEqual(await mapper.get_media_type("kitsu:2"), "series")
+
+        with patch.object(mapper, "_get_entry_data", return_value={"type": "UNKNOWN"}):
+            self.assertIsNone(await mapper.get_media_type("kitsu:3"))
+
     def test_malformed_kitsu_identifier_is_rejected(self):
         self.assertEqual(AnimeMapper._parse_media_id("kitsu"), (None, None))
         self.assertEqual(AnimeMapper._parse_media_id("kitsu:"), (None, None))

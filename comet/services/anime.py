@@ -38,6 +38,13 @@ _FRIBB_PROVIDER_ORDER = (
 
 _DB_CHUNK_SIZE = 10000
 _ANIME_REFRESH_LOCK_ID = 0xA11E0001
+_ANIME_MEDIA_TYPES = {
+    "MOVIE": "movie",
+    "ONA": "series",
+    "OVA": "series",
+    "SPECIAL": "series",
+    "TV": "series",
+}
 
 
 @asynccontextmanager
@@ -75,6 +82,12 @@ class AnimeMapper:
             return True
 
         return await self._refresh_from_remote(session)
+
+    async def load_cached_mapping(self) -> bool:
+        """Load persisted mappings without scheduling downloads or refreshes."""
+        if self.loaded:
+            return True
+        return await self._load_from_database(schedule_refresh=False)
 
     def is_anime_content(self, media_id: str, media_only_id: str):
         if not settings.ANIME_MAPPING_ENABLED:
@@ -148,6 +161,15 @@ class AnimeMapper:
         if synonyms:
             aliases["ez"] = synonyms
         return aliases
+
+    async def get_media_type(self, media_id: str) -> str | None:
+        data = await self._get_entry_data(media_id)
+        if not data:
+            return None
+        raw_type = data.get("type")
+        if not isinstance(raw_type, str):
+            return None
+        return _ANIME_MEDIA_TYPES.get(raw_type.upper())
 
     async def get_imdb_from_kitsu(self, kitsu_id: str | int):
         if not self.loaded:

@@ -50,7 +50,7 @@ Supported commands:
 - `info --table <name>`
 - `export --output <dir> [--tables ...]`
 - `import --input <dir> [--tables ...]`
-- `cleanup-debrid-account [--media-id ...] [--min-rows ...] [--apply]`
+- `cleanup-debrid-account [--provider imdb|kitsu] [--media-id ...] [--min-rows ...] [--apply]`
 
 Export/import uses `DatabaseManager` with batched I/O and optional parallel processing.
 
@@ -80,6 +80,17 @@ instances can start with the most polluted entries using `--min-rows 1000`
 and/or `--limit`, then lower the threshold. Processing uses keyset pagination
 and bounded delete batches; `--batch-size` tunes the number of distinct hashes
 validated per read.
+
+Use `--provider imdb` or `--provider kitsu` to restrict discovery to one ID
+provider. Kitsu cache IDs are stored numerically; the cleanup resolves their
+movie/series type from the persisted anime mapping.
+
+For example, audit and then clean only Kitsu associations:
+
+```bash
+python -m comet.db_cli cleanup-debrid-account --provider kitsu
+python -m comet.db_cli cleanup-debrid-account --provider kitsu --apply
+```
 
 ## Operational Advice
 

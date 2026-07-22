@@ -13,6 +13,7 @@ from comet.core.models import database
 from comet.core.schema_specs import DEBRID_ACCOUNT_TRACKER_PREDICATE
 from comet.metadata.manager import MetadataScraper
 from comet.metadata.tmdb import TMDBApi
+from comet.services.anime import anime_mapper
 from comet.services.debrid_account_cache_cleanup import (
     DEFAULT_CLEANUP_BATCH_SIZE,
     repair_debrid_account_cache_for_media,
@@ -177,44 +178,87 @@ def positive_int(value: str) -> int:
     return parsed
 
 
+def _classify_cleanup_media_id(media_id: str) -> tuple[str, str | None]:
+    if media_id.startswith("kitsu:"):
+        provider_id = media_id.partition(":")[2]
+        return provider_id, "kitsu" if provider_id.isdigit() else None
+    if media_id.startswith("tt"):
+        return media_id, "imdb"
+    if media_id.isdigit():
+        return media_id, "kitsu"
+    return media_id, None
+
+
 async def _get_debrid_account_cleanup_candidates(
-    media_ids: list[str] | None, min_rows: int, limit: int | None
+    media_ids: list[str] | None,
+    min_rows: int,
+    limit: int | None,
+    provider: str | None,
 ):
     if media_ids:
-        return [(media_id, None) for media_id in dict.fromkeys(media_ids)]
+        candidates = []
+        seen = set()
+        for media_id in media_ids:
+            normalized_id, detected_provider = _classify_cleanup_media_id(media_id)
+            if normalized_id not in seen and (
+                provider is None or provider == detected_provider
+            ):
+                candidates.append((normalized_id, None, detected_provider))
+                seen.add(normalized_id)
+        return candidates
 
     limit_sql = "LIMIT :limit" if limit is not None else ""
     params = {"min_rows": min_rows}
     if limit is not None:
         params["limit"] = limit
 
+    if provider == "kitsu":
+        from_sql = """
+            torrents AS t
+            INNER JOIN anime_ids AS ai
+                ON ai.provider = 'kitsu'
+               AND ai.provider_id = t.media_id
+        """
+        provider_sql = ""
+    else:
+        from_sql = "torrents AS t"
+        provider_sql = (
+            "AND substr(t.media_id, 1, 2) = 'tt'" if provider == "imdb" else ""
+        )
+
     rows = await database.fetch_all(
         f"""
-        SELECT media_id, COUNT(*) AS row_count
-        FROM torrents
+        SELECT t.media_id, COUNT(*) AS row_count
+        FROM {from_sql}
         WHERE {DEBRID_ACCOUNT_TRACKER_PREDICATE}
-        GROUP BY media_id
+        {provider_sql}
+        GROUP BY t.media_id
         HAVING COUNT(*) >= :min_rows
-        ORDER BY row_count DESC, media_id
+        ORDER BY row_count DESC, t.media_id
         {limit_sql}
         """,
         params,
         force_primary=True,
     )
-    return [(row["media_id"], int(row["row_count"])) for row in rows]
+    candidates = []
+    for row in rows:
+        media_id, detected_provider = _classify_cleanup_media_id(row["media_id"])
+        candidates.append((media_id, int(row["row_count"]), detected_provider))
+    return candidates
 
 
 async def cleanup_debrid_account_command(
     *,
     media_ids: list[str] | None,
     media_type: str | None,
+    provider: str | None,
     min_rows: int,
     limit: int | None,
     batch_size: int,
     apply: bool,
 ):
     candidates = await _get_debrid_account_cleanup_candidates(
-        media_ids, min_rows, limit
+        media_ids, min_rows, limit, provider
     )
     action = "APPLY" if apply else "DRY RUN"
     print(f"\nDebridAccount cache cleanup ({action}): {len(candidates):,} media items")
@@ -234,11 +278,34 @@ async def cleanup_debrid_account_command(
     async with aiohttp.ClientSession() as session:
         metadata_scraper = MetadataScraper(session)
         tmdb = TMDBApi(session)
-        for index, (media_id, known_rows) in enumerate(candidates, 1):
+        needs_kitsu = any(
+            candidate_provider == "kitsu" for _, _, candidate_provider in candidates
+        )
+        kitsu_mapping_ready = (
+            await anime_mapper.load_cached_mapping() if needs_kitsu else False
+        )
+
+        for index, (media_id, known_rows, candidate_provider) in enumerate(
+            candidates, 1
+        ):
+            if candidate_provider is None or (
+                candidate_provider == "kitsu" and not kitsu_mapping_ready
+            ):
+                totals["skipped"] += 1
+                print(
+                    f"[{index}/{len(candidates)}] {media_id}: "
+                    "skipped (unknown provider or unavailable anime mapping)"
+                )
+                continue
+
             resolved_type = media_type
             if resolved_type is None:
-                if media_id.startswith("tt"):
+                if candidate_provider == "imdb":
                     resolved_type = await tmdb.get_media_type_from_imdb(media_id)
+                elif candidate_provider == "kitsu" and kitsu_mapping_ready:
+                    resolved_type = await anime_mapper.get_media_type(
+                        f"kitsu:{media_id}"
+                    )
 
             if resolved_type is None:
                 totals["skipped"] += 1
@@ -247,13 +314,11 @@ async def cleanup_debrid_account_command(
                 )
                 continue
 
-            metadata_id = (
-                media_id.partition(":")[2]
-                if media_id.startswith("kitsu:")
-                else media_id
+            source_media_id = (
+                f"kitsu:{media_id}" if candidate_provider == "kitsu" else media_id
             )
             metadata, aliases = await metadata_scraper.fetch_metadata_and_aliases(
-                resolved_type, media_id, id=metadata_id
+                resolved_type, source_media_id, id=media_id
             )
             if metadata is None:
                 totals["skipped"] += 1
@@ -372,7 +437,12 @@ Examples:
     cleanup_parser.add_argument(
         "--media-type",
         choices=("movie", "series"),
-        help="Force the media type (normally detected from IMDb)",
+        help="Force the media type instead of auto-detection",
+    )
+    cleanup_parser.add_argument(
+        "--provider",
+        choices=("imdb", "kitsu"),
+        help="Only scan media IDs from this provider",
     )
     cleanup_parser.add_argument(
         "--min-rows",
@@ -439,6 +509,7 @@ Examples:
             await cleanup_debrid_account_command(
                 media_ids=args.media_ids,
                 media_type=args.media_type,
+                provider=args.provider,
                 min_rows=args.min_rows,
                 limit=args.limit,
                 batch_size=args.batch_size,
