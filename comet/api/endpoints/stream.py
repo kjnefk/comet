@@ -267,7 +267,7 @@ async def background_scrape(
         )
         return
 
-    try:
+    async def run_scrape():
         await torrent_manager.scrape_torrents()
 
         if debrid_entries and len(torrent_manager.torrents) > 0:
@@ -282,6 +282,9 @@ async def background_scrape(
                 ip,
                 target_air_date=torrent_manager.target_air_date,
             )
+
+    try:
+        await scrape_lock.run(run_scrape())
 
         logger.log(
             "SCRAPER",

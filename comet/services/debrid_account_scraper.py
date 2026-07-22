@@ -252,7 +252,9 @@ async def _sync_task(
     account_key_hash: str,
 ):
     try:
-        await _sync_single_account(session, service, api_key, ip, account_key_hash)
+        await lock.run(
+            _sync_single_account(session, service, api_key, ip, account_key_hash)
+        )
     except Exception as e:
         logger.warning(f"Failed to sync debrid account torrents for {service}: {e}")
     finally:

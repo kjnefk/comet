@@ -49,7 +49,7 @@ class DMMIngester:
                 lock = DistributedLock(LOCK_KEY, timeout=LOCK_TTL)
                 if await lock.acquire(wait_timeout=None):
                     try:
-                        await self._ingest_cycle(lock)
+                        await lock.run(self._ingest_cycle())
                     finally:
                         await lock.release()
                 else:
@@ -62,7 +62,7 @@ class DMMIngester:
 
             await asyncio.sleep(settings.DMM_INGEST_INTERVAL)
 
-    async def _ingest_cycle(self, lock: DistributedLock):
+    async def _ingest_cycle(self):
         logger.log("DMM_INGEST", "Checking for DMM updates...")
 
         os.makedirs(TEMP_DIR, exist_ok=True)
@@ -81,8 +81,6 @@ class DMMIngester:
 
                     with open(zip_path, "wb") as f:
                         while True:
-                            await lock.acquire()
-
                             chunk = await response.content.read(1024 * 1024 * 64)
                             if not chunk:
                                 break
@@ -117,8 +115,6 @@ class DMMIngester:
             for i in range(0, total_files, batch_size):
                 if not self.is_running:
                     break
-
-                await lock.acquire()
 
                 batch_files = new_files[i : i + batch_size]
 

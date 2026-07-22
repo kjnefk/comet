@@ -116,6 +116,11 @@ class DebridAccountTaskTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
 
         lock = AsyncMock()
+
+        async def run_locked(operation):
+            return await operation
+
+        lock.run.side_effect = run_locked
         with patch.object(account_scraper, "_sync_single_account", new=sync_account):
             task = account_scraper._schedule_sync_task(
                 lock, object(), "alldebrid", "key", "ip", "account"

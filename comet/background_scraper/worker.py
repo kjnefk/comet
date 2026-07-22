@@ -594,28 +594,11 @@ class BackgroundScraperWorker:
             try:
                 lock = DistributedLock(LOCK_KEY, timeout=LOCK_TTL)
                 if await lock.acquire(wait_timeout=None):
-                    lock_task = None
-                    scrape_task = None
                     try:
-                        lock_task = asyncio.create_task(self._maintain_lock(lock))
                         scrape_task = asyncio.create_task(self._run_scraping_cycle())
                         self._active_scrape_task = scrape_task
-
-                        done, _ = await asyncio.wait(
-                            [lock_task, scrape_task],
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-
-                        if lock_task in done:
-                            logger.warning(
-                                "BACKGROUND_SCRAPER: Lock lost during processing, aborting active cycle",
-                            )
-                        else:
-                            if scrape_task.exception():
-                                raise scrape_task.exception()
+                        await lock.run(scrape_task)
                     finally:
-                        await self._cancel_task(lock_task)
-                        await self._cancel_task(scrape_task)
                         await lock.release()
                         self._active_scrape_task = None
                 else:
@@ -632,19 +615,6 @@ class BackgroundScraperWorker:
                 self.last_error = str(e)
                 logger.error(f"Error in background scraper loop: {e}")
                 await asyncio.sleep(300)
-
-    async def _maintain_lock(self, lock: DistributedLock):
-        try:
-            while True:
-                await asyncio.sleep(LOCK_TTL / 2)
-                if not await lock.acquire():
-                    logger.warning("BACKGROUND_SCRAPER: Failed to renew lock")
-                    return
-        except asyncio.CancelledError:
-            return
-        except Exception as e:
-            logger.error(f"Error in background lock maintenance: {e}")
-            return
 
     async def _run_scraping_cycle(self):
         run_id = str(uuid.uuid4())
