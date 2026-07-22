@@ -1,4 +1,6 @@
 import asyncio
+import copy
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,6 +60,85 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
             detached.display_name = "Mutated outside store"
 
             self.assertEqual(store.get_manifest("pool-a").display_name, "Original")
+
+    async def test_manifest_persistence_excludes_derived_node_ids_and_reloads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._manifest())
+
+            manifest_path = Path(directory, "manifests", "pool-a.json")
+            persisted = json.loads(manifest_path.read_text())
+            self.assertNotIn("node_id", persisted["members"][0])
+
+            reloaded = PoolStore(directory)
+            await reloaded.load()
+            self.assertEqual(
+                reloaded.get_manifest("pool-a").members[0].public_key,
+                "creator-key",
+            )
+
+    async def test_manifest_model_rejects_non_current_or_inconsistent_data(self):
+        valid = self._manifest().to_persisted_dict()
+        malformed = []
+
+        root_extra = copy.deepcopy(valid)
+        root_extra["legacy"] = True
+        malformed.append(root_extra)
+
+        member_extra = copy.deepcopy(valid)
+        member_extra["members"][0]["node_id"] = "derived"
+        malformed.append(member_extra)
+
+        boolean_version = copy.deepcopy(valid)
+        boolean_version["version"] = True
+        malformed.append(boolean_version)
+
+        boolean_count = copy.deepcopy(valid)
+        boolean_count["members"][0]["contribution_count"] = True
+        malformed.append(boolean_count)
+
+        non_finite_timestamp = copy.deepcopy(valid)
+        non_finite_timestamp["updated_at"] = float("nan")
+        malformed.append(non_finite_timestamp)
+
+        duplicate_member = copy.deepcopy(valid)
+        duplicate_member["members"].append(copy.deepcopy(duplicate_member["members"][0]))
+        malformed.append(duplicate_member)
+
+        mismatched_creator = copy.deepcopy(valid)
+        mismatched_creator["creator_key"] = "someone-else"
+        malformed.append(mismatched_creator)
+
+        non_canonical_id = copy.deepcopy(valid)
+        non_canonical_id["pool_id"] = " Pool-A "
+        malformed.append(non_canonical_id)
+
+        for data in malformed:
+            with self.subTest(data=data):
+                with self.assertRaises(ValueError):
+                    PoolManifest.model_validate(data)
+
+    async def test_load_isolates_invalid_and_misnamed_manifests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = PoolStore(directory)
+            valid = self._manifest().to_persisted_dict()
+            (root / "manifests" / "pool-a.json").write_text(json.dumps(valid))
+
+            invalid = copy.deepcopy(valid)
+            invalid["pool_id"] = "pool-b"
+            invalid["members"][0]["public_key"] = "other"
+            (root / "manifests" / "pool-b.json").write_text(json.dumps(invalid))
+
+            misnamed = copy.deepcopy(valid)
+            misnamed["pool_id"] = "pool-c"
+            (root / "manifests" / "wrong-name.json").write_text(
+                json.dumps(misnamed)
+            )
+
+            await store.load()
+
+            self.assertEqual(set(store.get_all_manifests()), {"pool-a"})
 
     async def test_failed_manifest_store_preserves_published_state_and_disk(self):
         with tempfile.TemporaryDirectory() as directory:

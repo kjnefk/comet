@@ -57,15 +57,45 @@ class JoinMode(str, Enum):
 class PoolMember(BaseModel):
     """A member of a pool."""
 
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+
     public_key: str
     role: MemberRole = MemberRole.MEMBER
     added_at: float = Field(default_factory=time.time)
-    added_by: str = ""  # Public key of admin who added this member
+    added_by: str  # Public key of admin who added this member
     alias: Optional[str] = None  # Friendly name
 
     # Stats (local tracking)
     contribution_count: int = 0
     last_seen: float = 0.0
+
+    @field_validator("public_key", "added_by", mode="before")
+    @classmethod
+    def validate_required_keys(cls, value):
+        if type(value) is not str or not value:
+            raise ValueError("member public keys must be non-empty strings")
+        return value
+
+    @field_validator("alias", mode="before")
+    @classmethod
+    def validate_alias(cls, value):
+        if value is not None and type(value) is not str:
+            raise ValueError("member alias must be a string or null")
+        return value
+
+    @field_validator("added_at", "last_seen", mode="before")
+    @classmethod
+    def validate_timestamps(cls, value):
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise ValueError("member timestamps must be finite non-negative numbers")
+        return value
+
+    @field_validator("contribution_count", mode="before")
+    @classmethod
+    def validate_contribution_count(cls, value):
+        if type(value) is not int or value < 0:
+            raise ValueError("contribution_count must be a non-negative integer")
+        return value
 
     @computed_field
     @property
@@ -82,6 +112,8 @@ class PoolManifest(BaseModel):
     propagated across the network.
     """
 
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+
     # Identity (immutable after creation)
     pool_id: str
     created_at: float = Field(default_factory=time.time)
@@ -92,7 +124,7 @@ class PoolManifest(BaseModel):
     description: str = ""
 
     # Members
-    members: List[PoolMember] = Field(default_factory=list)
+    members: List[PoolMember]
 
     # Rules
     join_mode: JoinMode = JoinMode.INVITE
@@ -105,16 +137,79 @@ class PoolManifest(BaseModel):
     # Maps admin public key -> signature
     signatures: Dict[str, str] = Field(default_factory=dict)
 
-    @field_validator("pool_id")
+    @field_validator("pool_id", mode="before")
     @classmethod
-    def validate_pool_id(cls, v: str) -> str:
+    def validate_pool_id(cls, value):
         """Validate pool ID format."""
-        v = v.lower().strip()
-        if len(v) < 2 or len(v) > 64:
+        if type(value) is not str or value != value.strip().lower():
+            raise ValueError("pool_id must use its canonical lowercase form")
+        if len(value) < 2 or len(value) > 64:
             raise ValueError("pool_id must be 2-64 characters")
-        if not v.replace("-", "").replace("_", "").isalnum():
+        if not value.replace("-", "").replace("_", "").isalnum():
             raise ValueError("pool_id must be alphanumeric with - or _")
-        return v
+        return value
+
+    @field_validator("creator_key", "display_name", mode="before")
+    @classmethod
+    def validate_required_strings(cls, value):
+        if type(value) is not str or not value:
+            raise ValueError("manifest identity fields must be non-empty strings")
+        return value
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def validate_description(cls, value):
+        if type(value) is not str:
+            raise ValueError("manifest description must be a string")
+        return value
+
+    @field_validator("created_at", "updated_at", mode="before")
+    @classmethod
+    def validate_timestamps(cls, value):
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise ValueError("manifest timestamps must be finite non-negative numbers")
+        return value
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_version(cls, value):
+        if type(value) is not int or value < 1:
+            raise ValueError("manifest version must be a positive integer")
+        return value
+
+    @field_validator("members", mode="before")
+    @classmethod
+    def validate_members_container(cls, value):
+        if type(value) is not list:
+            raise ValueError("manifest members must be a list")
+        return value
+
+    @field_validator("signatures", mode="before")
+    @classmethod
+    def validate_signatures(cls, value):
+        if type(value) is not dict or any(
+            type(key) is not str
+            or not key
+            or type(signature) is not str
+            or not signature
+            for key, signature in value.items()
+        ):
+            raise ValueError("manifest signatures must map non-empty strings")
+        return value
+
+    @model_validator(mode="after")
+    def validate_member_structure(self):
+        if not self.members:
+            raise ValueError("manifest must contain at least one member")
+        public_keys = [member.public_key for member in self.members]
+        if len(public_keys) != len(set(public_keys)):
+            raise ValueError("manifest member public keys must be unique")
+        creators = [member for member in self.members if member.role is MemberRole.CREATOR]
+        if len(creators) != 1 or creators[0].public_key != self.creator_key:
+            raise ValueError("manifest must contain exactly its declared creator")
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot precede created_at")
+        return self
 
     def get_admins(self) -> List[PoolMember]:
         """Get all admin members (including creator)."""
@@ -182,7 +277,11 @@ class PoolManifest(BaseModel):
 
     def to_bytes(self) -> bytes:
         """Serialize the manifest to MsgPack bytes."""
-        return msgpack.packb(self.model_dump())
+        return msgpack.packb(self.to_persisted_dict())
+
+    def to_persisted_dict(self) -> Dict:
+        """Serialize consensus and local fields without derived node IDs."""
+        return self.model_dump(exclude={"members": {"__all__": {"node_id"}}})
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "PoolManifest":
@@ -400,14 +499,17 @@ class PoolStore:
                 identity.public_key_hex
             ] = await identity.sign_hex_async(manifest.to_signable_bytes())
 
+        persisted_manifest = PoolManifest.model_validate(manifest.to_persisted_dict())
+
         manifest_path = self.manifests_dir / f"{manifest.pool_id}.json"
         await write_text_atomic(
-            manifest_path, json.dumps(manifest.model_dump(), indent=2)
+            manifest_path,
+            json.dumps(persisted_manifest.to_persisted_dict(), indent=2),
         )
 
         # Publish only a fully persisted snapshot. Keeping a detached copy also
         # prevents callers from mutating trusted state without another store.
-        self._manifests[manifest.pool_id] = manifest.model_copy(deep=True)
+        self._manifests[manifest.pool_id] = persisted_manifest
         return True
 
     async def create_pool(
@@ -877,6 +979,8 @@ class PoolStore:
                     content = await f.read()
                     data = json.loads(content)
                 manifest = PoolManifest.model_validate(data)
+                if manifest.pool_id != manifest_file.stem:
+                    raise ValueError("manifest pool_id must match its filename")
                 self._manifests[manifest.pool_id] = manifest
             except Exception as e:
                 logger.warning(f"Failed to load manifest {manifest_file}: {e}")
@@ -1112,7 +1216,7 @@ class PoolStore:
         manifest_path = self.manifests_dir / f"{manifest.pool_id}.json"
         try:
             await write_text_atomic(
-                manifest_path, json.dumps(manifest.model_dump(), indent=2)
+                manifest_path, json.dumps(manifest.to_persisted_dict(), indent=2)
             )
             return True
         except Exception as e:

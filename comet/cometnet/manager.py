@@ -1091,13 +1091,11 @@ class CometNetService(CometNetBackend):
             return
 
         current_manifest = self.pool_store.get_manifest(message.pool_id)
-
-        current_manifest = self.pool_store.get_manifest(message.pool_id)
         if not current_manifest:
             return
 
         # Work on a copy to verify before updating
-        manifest = PoolManifest(**current_manifest.model_dump())
+        manifest = current_manifest.model_copy(deep=True)
 
         # Special case: member leaving (self-removal)
         # For "leave" action, the updated_by should be the member themselves
