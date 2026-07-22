@@ -243,6 +243,19 @@ def merge_aliases(*collections: object) -> dict[str, list[str]]:
     return merged
 
 
+def _strip_latin_diacritics(value: str) -> str:
+    characters = []
+    follows_latin_character = False
+    for character in unicodedata.normalize("NFD", value):
+        if unicodedata.combining(character):
+            if not follows_latin_character:
+                characters.append(character)
+            continue
+        characters.append(character)
+        follows_latin_character = "LATIN" in unicodedata.name(character, "")
+    return unicodedata.normalize("NFC", "".join(characters))
+
+
 def select_indexer_titles(
     title: str,
     aliases: object,
@@ -261,11 +274,8 @@ def select_indexer_titles(
             candidate := " ".join(candidate.split())
         ):
             return
-        identity = "".join(
-            character
-            for character in unicodedata.normalize("NFKD", candidate.casefold())
-            if not unicodedata.combining(character)
-        )
+        candidate = _strip_latin_diacritics(candidate)
+        identity = unicodedata.normalize("NFKC", candidate).casefold()
         if identity in seen:
             return
         seen.add(identity)

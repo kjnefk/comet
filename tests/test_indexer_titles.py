@@ -31,12 +31,12 @@ class IndexerTitleTests(unittest.TestCase):
             select_indexer_titles("The Life Ahead", aliases, ["it", "fr"]),
             (
                 "The Life Ahead",
-                "La vita davanti a sé",
+                "La vita davanti a se",
                 "La Vie devant soi",
             ),
         )
 
-    def test_one_accent_insensitive_title_is_selected_per_language(self):
+    def test_latin_diacritics_are_removed_without_an_alternative_alias(self):
         self.assertEqual(
             select_indexer_titles(
                 "A Prophet",
@@ -47,7 +47,24 @@ class IndexerTitleTests(unittest.TestCase):
                 ["fr"],
                 include_canonical=False,
             ),
-            ("Un prophète",),
+            ("Un prophete",),
+        )
+
+        self.assertEqual(
+            select_indexer_titles(
+                "Dune: Part Two",
+                {"lang:fr": ["Dune : Deuxième partie"]},
+                ["fr"],
+                include_canonical=False,
+                include_original=False,
+            ),
+            ("Dune : Deuxieme partie",),
+        )
+
+    def test_non_latin_diacritics_are_preserved(self):
+        self.assertEqual(
+            select_indexer_titles("が Й", {}, []),
+            ("が Й",),
         )
 
     def test_original_and_localized_titles_are_selected_without_canonical_title(self):
@@ -59,7 +76,7 @@ class IndexerTitleTests(unittest.TestCase):
 
         self.assertEqual(
             select_indexer_titles("The Life Ahead", aliases, ["fr"]),
-            ("The Life Ahead", "La vita davanti a sé", "La Vie devant soi"),
+            ("The Life Ahead", "La vita davanti a se", "La Vie devant soi"),
         )
         self.assertEqual(
             select_indexer_titles(
@@ -68,7 +85,7 @@ class IndexerTitleTests(unittest.TestCase):
                 ["fr"],
                 include_canonical=False,
             ),
-            ("La vita davanti a sé", "La Vie devant soi"),
+            ("La vita davanti a se", "La Vie devant soi"),
         )
 
     def test_anime_uses_one_original_and_one_localized_title(self):
@@ -83,7 +100,7 @@ class IndexerTitleTests(unittest.TestCase):
             (
                 "Konosuba! Legend of Crimson",
                 "Kono Subarashii Sekai ni Shukufuku wo! Movie",
-                "Konosuba : La légende de Crimson",
+                "Konosuba : La legende de Crimson",
             ),
         )
 
@@ -108,7 +125,7 @@ class IndexerTitleTests(unittest.TestCase):
                 {"original:it": ["La vita davanti a sé"]},
                 [],
             ),
-            ("The Life Ahead", "La vita davanti a sé"),
+            ("The Life Ahead", "La vita davanti a se"),
         )
 
     def test_every_title_source_can_be_disabled_independently(self):

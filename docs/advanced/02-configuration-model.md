@@ -62,7 +62,7 @@ Behavior:
 - `INDEXER_INCLUDE_ORIGINAL_TITLE`: includes one original TMDB or anime-mapping title. Defaults to `True`.
 - `INDEXER_LANGUAGES`: includes at most one TMDB title per configured ISO 639-1 language. Defaults to `[]`.
 
-These sources are independent and apply to every title-based scraper. Titles are deduplicated ignoring case and accents, and Comet safely falls back to the canonical title if the selected sources produce no usable title.
+These sources are independent and apply to every title-based scraper. Latin diacritics are removed from search titles for broader indexer compatibility, while non-Latin writing systems are preserved. Equivalent titles are deduplicated, and Comet safely falls back to the canonical title if the selected sources produce no usable title.
 
 6. Background jobs
 - `BACKGROUND_SCRAPER_*`

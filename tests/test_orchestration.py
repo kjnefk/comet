@@ -41,11 +41,11 @@ class TorrentOrchestrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             captured[0].query_titles,
-            ("La vita davanti a sé",),
+            ("La vita davanti a se",),
         )
         log.assert_any_call(
             "SCRAPER",
-            "🔤 Indexer titles (1): “La vita davanti a sé”",
+            "🔤 Indexer titles (1): “La vita davanti a se”",
         )
 
     async def test_filter_manager_logs_scraper_response_time(self):
