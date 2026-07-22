@@ -303,6 +303,28 @@ class CometNetTransportTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn("peer", manager._connections)
 
+    async def test_disconnect_releases_inbound_ip_slot(self):
+        manager = ConnectionManager(_Identity())
+
+        class WebSocket:
+            async def close(inner_self):
+                del inner_self
+
+        connection = PeerConnection(
+            node_id="peer",
+            address="ws://peer",
+            websocket=WebSocket(),
+            client_ip="203.0.113.5",
+            is_outbound=False,
+        )
+        manager._connections["peer"] = connection
+        manager._connections_per_ip["203.0.113.5"] = 1
+
+        await manager.disconnect_peer("peer")
+
+        self.assertNotIn("peer", manager._connections)
+        self.assertNotIn("203.0.113.5", manager._connections_per_ip)
+
     async def test_old_receive_loop_does_not_remove_replacement_connection(self):
         manager = ConnectionManager(_Identity())
         old_connection = PeerConnection(

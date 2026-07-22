@@ -491,6 +491,7 @@ class ConnectionManager:
         for conn in list(self._connections.values()):
             await conn.close()
         self._connections.clear()
+        self._connections_per_ip.clear()
 
         logger.log("COMETNET", "Transport layer stopped")
 
@@ -634,11 +635,7 @@ class ConnectionManager:
             async with self._connection_lock:
                 self._pending_connections -= 1
                 if node_id is None:
-                    self._connections_per_ip[ip] = max(
-                        0, self._connections_per_ip.get(ip, 1) - 1
-                    )
-                    if self._connections_per_ip.get(ip, 0) == 0:
-                        self._connections_per_ip.pop(ip, None)
+                    self._release_ip_slot(ip)
             if node_id is None:
                 await websocket.close()
 
@@ -898,22 +895,35 @@ class ConnectionManager:
                 f"{type(error).__name__}: {error}"
             )
         finally:
-            # Clean up connection
-            if self._connections.get(conn.node_id) is conn:
-                # Decrement IP connection counter (only for inbound connections that we track)
-                if not conn.is_outbound and conn.client_ip:
-                    ip = conn.client_ip
-                    if ip in self._connections_per_ip:
-                        self._connections_per_ip[ip] = max(
-                            0, self._connections_per_ip[ip] - 1
-                        )
-                        if self._connections_per_ip[ip] == 0:
-                            del self._connections_per_ip[ip]
-                self._connections.pop(conn.node_id, None)
+            self._release_connection(conn.node_id, conn)
             logger.log(
                 "COMETNET",
                 f"Disconnected from peer {conn.node_id[:8]} ({conn.alias or 'no alias'})",
             )
+
+    def _release_ip_slot(self, ip: str) -> None:
+        """Release one inbound per-IP reservation, dropping the key at zero."""
+        remaining = self._connections_per_ip.get(ip, 0) - 1
+        if remaining > 0:
+            self._connections_per_ip[ip] = remaining
+        else:
+            self._connections_per_ip.pop(ip, None)
+
+    def _release_connection(self, node_id: str, conn: PeerConnection) -> bool:
+        """Drop ``conn`` iff it is still the live connection for ``node_id`` and
+        release any inbound per-IP reservation it holds.
+
+        Fully synchronous: it runs to completion without awaiting, so the two
+        teardown paths (receive loop and disconnect_peer) can never release the
+        same slot twice. Whichever path wins the identity check does the work;
+        the other becomes a no-op.
+        """
+        if self._connections.get(node_id) is not conn:
+            return False
+        del self._connections[node_id]
+        if not conn.is_outbound and conn.client_ip:
+            self._release_ip_slot(conn.client_ip)
+        return True
 
     async def _handle_ping(self, conn: PeerConnection, ping: PingMessage) -> None:
         """Respond to a ping with a pong."""
@@ -1050,8 +1060,7 @@ class ConnectionManager:
         connection = self._connections.get(node_id)
         if connection is not None:
             await connection.close()
-            if self._connections.get(node_id) is connection:
-                self._connections.pop(node_id, None)
+            self._release_connection(node_id, connection)
 
     async def _remediate_eclipse_attack(self) -> None:
         """
