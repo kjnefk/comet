@@ -323,15 +323,31 @@ class AnimeMapper:
     def _handle_refresh_task_done(self, task: asyncio.Task):
         if self._refresh_task is task:
             self._refresh_task = None
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.warning(f"Anime mapping refresh task failed: {error}")
 
     def _schedule_background_refresh(self):
         if self._refresh_task is not None and not self._refresh_task.done():
             return
 
         self._refresh_task = asyncio.create_task(
-            self._refresh_from_remote(background=True)
+            self._refresh_from_remote(background=True),
+            name="anime-mapping-refresh",
         )
         self._refresh_task.add_done_callback(self._handle_refresh_task_done)
+
+    async def stop(self):
+        task = self._refresh_task
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if self._refresh_task is task:
+            self._refresh_task = None
 
     async def _load_from_database(
         self,

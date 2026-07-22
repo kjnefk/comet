@@ -87,6 +87,7 @@ async def lifespan(app: FastAPI):
         await setup_database()
         cleanup.push_async_callback(teardown_database)
         cleanup.push_async_callback(shutdown_cache_writes)
+        cleanup.push_async_callback(anime_mapper.stop)
 
         cleanup.callback(shutdown_executor)
         setup_executor()
