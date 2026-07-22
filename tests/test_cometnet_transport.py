@@ -1,13 +1,15 @@
 import asyncio
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
-from comet.cometnet.transport import ConnectionManager, PeerConnection
+from comet.cometnet.protocol import HandshakeMessage
+from comet.cometnet.transport import ConnectionManager, NodeIdentity, PeerConnection
 
 
 class _Identity:
     node_id = "local"
+    public_key_hex = "local-key"
 
     async def sign_hex_async(self, payload):
         del payload
@@ -34,6 +36,50 @@ class _Peer:
 
 
 class CometNetTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_duplicate_inbound_handshake_releases_reserved_ip_slot(self):
+        manager = ConnectionManager(_Identity())
+        manager._connections["peer"] = object()
+        manager._connections_per_ip["203.0.113.1"] = 1
+        handshake = HandshakeMessage(
+            sender_id="peer",
+            public_key="peer-key",
+            signature="signature",
+        )
+
+        class WebSocket:
+            closed = False
+
+            async def recv(self):
+                return handshake.to_bytes()
+
+            async def send(self, payload):
+                del payload
+
+            async def close(self):
+                self.closed = True
+
+        websocket = WebSocket()
+        with (
+            patch.object(
+                NodeIdentity,
+                "verify_hex_async",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                NodeIdentity,
+                "node_id_from_public_key",
+                return_value="peer",
+            ),
+        ):
+            node_id = await manager.handle_incoming_connection(
+                websocket,
+                "203.0.113.1",
+            )
+
+        self.assertIsNone(node_id)
+        self.assertTrue(websocket.closed)
+        self.assertEqual(manager._connections_per_ip["203.0.113.1"], 1)
+
     async def test_disconnect_tolerates_receive_loop_removing_connection(self):
         manager = ConnectionManager(_Identity())
 

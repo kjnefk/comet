@@ -744,7 +744,7 @@ class ConnectionManager:
             # Check if already connected to this node
             if peer_handshake.sender_id in self._connections:
                 await websocket.close()
-                return peer_handshake.sender_id
+                return None
 
             # Don't connect to ourselves
             if peer_handshake.sender_id == self.identity.node_id:
