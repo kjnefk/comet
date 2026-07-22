@@ -314,11 +314,15 @@ class PoolStore:
 
     def get_manifest(self, pool_id: str) -> Optional[PoolManifest]:
         """Get a pool manifest by ID."""
-        return self._manifests.get(pool_id)
+        manifest = self._manifests.get(pool_id)
+        return manifest.model_copy(deep=True) if manifest else None
 
     def get_all_manifests(self) -> Dict[str, PoolManifest]:
         """Get all known pool manifests."""
-        return self._manifests.copy()
+        return {
+            pool_id: manifest.model_copy(deep=True)
+            for pool_id, manifest in self._manifests.items()
+        }
 
     async def store_manifest(
         self,
@@ -341,19 +345,15 @@ class PoolStore:
                 identity.public_key_hex
             ] = await identity.sign_hex_async(manifest.to_signable_bytes())
 
-        # Store in memory
-        self._manifests[manifest.pool_id] = manifest
-
-        # Persist to disk
         manifest_path = self.manifests_dir / f"{manifest.pool_id}.json"
-        try:
-            await write_text_atomic(
-                manifest_path, json.dumps(manifest.model_dump(), indent=2)
-            )
-            return True
-        except Exception as e:
-            logger.warning(f"Failed to save pool manifest {manifest.pool_id}: {e}")
-            return False
+        await write_text_atomic(
+            manifest_path, json.dumps(manifest.model_dump(), indent=2)
+        )
+
+        # Publish only a fully persisted snapshot. Keeping a detached copy also
+        # prevents callers from mutating trusted state without another store.
+        self._manifests[manifest.pool_id] = manifest.model_copy(deep=True)
+        return True
 
     async def create_pool(
         self,
@@ -472,7 +472,7 @@ class PoolStore:
         Returns:
             True if member was added
         """
-        manifest = self._manifests.get(pool_id)
+        manifest = self.get_manifest(pool_id)
         if not manifest:
             raise ValueError(f"Pool {pool_id} not found")
 
@@ -510,7 +510,7 @@ class PoolStore:
         identity,  # NodeIdentity (must be admin)
     ) -> bool:
         """Remove a member from a pool (admin action)."""
-        manifest = self._manifests.get(pool_id)
+        manifest = self.get_manifest(pool_id)
         if not manifest:
             raise ValueError(f"Pool {pool_id} not found")
 
@@ -552,7 +552,7 @@ class PoolStore:
 
         Any member can leave a pool, except the creator who must delete the pool instead.
         """
-        manifest = self._manifests.get(pool_id)
+        manifest = self.get_manifest(pool_id)
         if not manifest:
             raise ValueError(f"Pool {pool_id} not found")
 
@@ -606,7 +606,7 @@ class PoolStore:
         identity,  # NodeIdentity (must be admin)
     ) -> bool:
         """Promote a member to admin."""
-        manifest = self._manifests.get(pool_id)
+        manifest = self.get_manifest(pool_id)
         if not manifest:
             raise ValueError(f"Pool {pool_id} not found")
 
@@ -697,7 +697,7 @@ class PoolStore:
         node_url: Optional[str] = None,  # URL of this node for remote joining
     ) -> PoolInvite:
         """Create an invitation to join a pool."""
-        manifest = self._manifests.get(pool_id)
+        manifest = self.get_manifest(pool_id)
         if not manifest:
             raise ValueError(f"Pool {pool_id} not found")
 
@@ -775,7 +775,7 @@ class PoolStore:
         if not invite or not invite.is_valid():
             return False
 
-        manifest = self._manifests.get(pool_id)
+        manifest = self.get_manifest(pool_id)
         if not manifest:
             return False
 
