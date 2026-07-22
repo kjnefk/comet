@@ -340,6 +340,18 @@ async def _has_fresh_snapshot(
     return bool(row)
 
 
+async def _get_fresh_snapshot_states(
+    targets: list[tuple[str, str]],
+    min_timestamp: float,
+) -> list[bool]:
+    return await asyncio.gather(
+        *(
+            _has_fresh_snapshot(service, account_key_hash, min_timestamp)
+            for service, account_key_hash in targets
+        )
+    )
+
+
 async def _wait_for_snapshot_targets(
     targets: list[tuple[str, str]],
     min_timestamp: float,
@@ -350,13 +362,10 @@ async def _wait_for_snapshot_targets(
 
     pending = targets
     while pending and time.monotonic() < deadline:
-        unresolved = []
-        for service, account_key_hash in pending:
-            has_snapshot = await _has_fresh_snapshot(
-                service, account_key_hash, min_timestamp
-            )
-            if not has_snapshot:
-                unresolved.append((service, account_key_hash))
+        states = await _get_fresh_snapshot_states(pending, min_timestamp)
+        unresolved = [
+            target for target, has_snapshot in zip(pending, states) if not has_snapshot
+        ]
         if not unresolved:
             return
         pending = unresolved
@@ -369,13 +378,13 @@ async def ensure_account_snapshot_ready(session, debrid_entries: list[dict], ip:
         return
 
     min_timestamp = time.time() - _debrid_account_snapshot_ttl()
-    missing = []
-    for service, api_key, account_key_hash in accounts:
-        has_snapshot = await _has_fresh_snapshot(
-            service, account_key_hash, min_timestamp
-        )
-        if not has_snapshot:
-            missing.append((service, api_key, account_key_hash))
+    states = await _get_fresh_snapshot_states(
+        [(service, account_key_hash) for service, _, account_key_hash in accounts],
+        min_timestamp,
+    )
+    missing = [
+        account for account, has_snapshot in zip(accounts, states) if not has_snapshot
+    ]
 
     if not missing:
         return
