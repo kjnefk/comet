@@ -6,13 +6,20 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import RedirectResponse
 
 from comet.core.config_validation import config_check
-from comet.core.database import (DOWNLOAD_LINK_CACHE_TTL,
-                                 build_scope_lookup_params, build_scope_params,
-                                 database)
+from comet.core.database import (
+    DOWNLOAD_LINK_CACHE_TTL,
+    build_scope_lookup_params,
+    build_scope_params,
+    database,
+)
+from comet.core.logger import logger
 from comet.core.models import settings
 from comet.debrid.exceptions import DebridLinkGenerationError
-from comet.debrid.manager import (build_account_key_hash, get_debrid,
-                                  get_debrid_credentials)
+from comet.debrid.manager import (
+    build_account_key_hash,
+    get_debrid,
+    get_debrid_credentials,
+)
 from comet.metadata.manager import MetadataScraper
 from comet.services.status_video import build_status_video_response
 from comet.services.streaming.manager import custom_handle_stream_request
@@ -21,6 +28,20 @@ from comet.utils.network import get_client_ip
 from comet.utils.parsing import parse_optional_int
 
 router = APIRouter()
+
+
+def _decode_sources(sources_json) -> list[str]:
+    if not sources_json:
+        return []
+
+    try:
+        sources = orjson.loads(sources_json)
+    except (TypeError, orjson.JSONDecodeError):
+        return []
+
+    if not isinstance(sources, list):
+        return []
+    return [source for source in sources if isinstance(source, str) and source]
 
 
 async def cache_download_link(
@@ -76,6 +97,16 @@ async def cache_download_link(
         """,
         params,
     )
+
+
+async def _cache_download_link_safely(**kwargs) -> None:
+    try:
+        await cache_download_link(**kwargs)
+    except Exception as exc:
+        logger.warning(
+            "Failed to cache generated download link for "
+            f"{kwargs['debrid_service']}:{kwargs['info_hash']}: {exc}"
+        )
 
 
 @router.get(
@@ -193,8 +224,7 @@ async def playback(
         sources = []
         context_media_id = media_id
         if torrent_data:
-            if torrent_data["sources_json"]:
-                sources = orjson.loads(torrent_data["sources_json"])
+            sources = _decode_sources(torrent_data["sources_json"])
             if context_media_id is None:
                 context_media_id = torrent_data["media_id"]
 
@@ -255,7 +285,7 @@ async def playback(
                 default_key="UNKNOWN",
             )
 
-        await cache_download_link(
+        await _cache_download_link_safely(
             debrid_service=debrid_service,
             account_key_hash=account_key_hash,
             info_hash=hash,
