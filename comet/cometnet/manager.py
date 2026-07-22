@@ -93,6 +93,33 @@ class CometNetService(CometNetBackend):
         self._running = False
         self._started_at: Optional[float] = None
         self._state_save_task: Optional[asyncio.Task] = None
+        self._background_tasks: Set[asyncio.Task] = set()
+
+    def _start_background_task(self, coroutine) -> Optional[asyncio.Task]:
+        if not self._running:
+            coroutine.close()
+            return None
+
+        task = asyncio.create_task(coroutine)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_task_done)
+        return task
+
+    def _on_background_task_done(self, task: asyncio.Task) -> None:
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.warning(f"CometNet background task failed: {error}")
+
+    async def _stop_background_tasks(self) -> None:
+        tasks = tuple(self._background_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
     @property
     def running(self) -> bool:
@@ -485,6 +512,9 @@ class CometNetService(CometNetBackend):
                 await self._state_save_task
             except asyncio.CancelledError:
                 pass
+            self._state_save_task = None
+
+        await self._stop_background_tasks()
 
         # Save state before stopping
         await self._save_state()
@@ -555,7 +585,7 @@ class CometNetService(CometNetBackend):
         if total_peers == 0:
             return
 
-        asyncio.create_task(self._connect_to_pool_peers(pool_peers))
+        self._start_background_task(self._connect_to_pool_peers(pool_peers))
 
     async def _connect_to_pool_peers(self, pool_peers: Dict[str, Set[str]]) -> None:
         """Background task to connect to pool peers."""
@@ -1359,7 +1389,7 @@ class CometNetService(CometNetBackend):
                 self.discovery.record_incoming_connection(node_id, real_address)
 
             # Sync manifests with the newly connected peer
-            asyncio.create_task(self._sync_manifests_with_peers([node_id]))
+            self._start_background_task(self._sync_manifests_with_peers([node_id]))
 
     async def _on_peer_connected(self, node_id: str, address: Optional[str]) -> None:
         """Callback when a peer connects via the native WebSocket server."""
@@ -1368,7 +1398,7 @@ class CometNetService(CometNetBackend):
 
         # Sync manifests with the newly connected peer
         # This ensures role changes and pool updates are synchronized
-        asyncio.create_task(self._sync_manifests_with_peers([node_id]))
+        self._start_background_task(self._sync_manifests_with_peers([node_id]))
 
     async def _sync_manifests_with_peers(self, peer_ids: List[str]) -> None:
         """
