@@ -1,6 +1,6 @@
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from comet.services.anime import AnimeMapper
 
@@ -72,3 +72,34 @@ class AnimeMapperTests(unittest.IsolatedAsyncioTestCase):
         warning.assert_called_once_with(
             "Anime mapping refresh task failed: unexpected refresh failure"
         )
+
+    async def test_remote_mapping_rolls_back_if_overrides_fail(self):
+        mapper = AnimeMapper()
+
+        class Transaction:
+            def __init__(self):
+                self.exit_error = None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, error_type, error, traceback):
+                self.exit_error = error
+
+        transaction = Transaction()
+        mapping = AsyncMock(return_value=2)
+        overrides = AsyncMock(side_effect=RuntimeError("override write failed"))
+
+        with (
+            patch(
+                "comet.services.anime.database.transaction", return_value=transaction
+            ),
+            patch.object(mapper, "_persist_mapping", mapping),
+            patch.object(mapper, "_persist_provider_overrides", overrides),
+            self.assertRaisesRegex(RuntimeError, "override write failed"),
+        ):
+            await mapper._persist_remote_mapping([], [], [])
+
+        mapping.assert_awaited_once_with([], [])
+        overrides.assert_awaited_once_with([])
+        self.assertIsInstance(transaction.exit_error, RuntimeError)

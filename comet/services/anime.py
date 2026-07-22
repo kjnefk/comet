@@ -436,10 +436,20 @@ class AnimeMapper:
                     data_fribb = orjson.loads(fribb_payload)
                     data_kitsu_imdb = orjson.loads(kitsu_payload)
 
-                    anime_list = data_aod.get("data", [])
-                    total_entries = await self._persist_mapping(anime_list, data_fribb)
-
-                    await self._persist_provider_overrides(data_kitsu_imdb)
+                    if not isinstance(data_aod, dict):
+                        raise ValueError("AOD payload must be an object")
+                    anime_list = data_aod.get("data")
+                    if (
+                        not isinstance(anime_list, list)
+                        or not isinstance(data_fribb, list)
+                        or not isinstance(data_kitsu_imdb, list)
+                    ):
+                        raise ValueError("Anime mapping payloads have invalid shapes")
+                    total_entries = await self._persist_remote_mapping(
+                        anime_list,
+                        data_fribb,
+                        data_kitsu_imdb,
+                    )
 
                     del data_aod
                     del data_fribb
@@ -464,6 +474,17 @@ class AnimeMapper:
             finally:
                 if own_session and session:
                     await session.close()
+
+    async def _persist_remote_mapping(
+        self,
+        anime_list: list,
+        fribb_list: list,
+        kitsu_imdb_data: list,
+    ) -> int:
+        async with database.transaction():
+            total_entries = await self._persist_mapping(anime_list, fribb_list)
+            await self._persist_provider_overrides(kitsu_imdb_data)
+        return total_entries
 
     async def _persist_mapping(self, anime_list: list, fribb_list: list):
         timestamp = time.time()
@@ -608,7 +629,7 @@ class AnimeMapper:
             return total_entries
         except Exception as exc:
             logger.error(f"Failed to persist anime mapping cache: {exc}")
-            return 0
+            raise
 
     async def _persist_provider_overrides(self, kitsu_imdb_data: list):
         total_count = 0
@@ -681,7 +702,7 @@ class AnimeMapper:
             return total_count
         except Exception as exc:
             logger.error(f"Failed to persist anime provider overrides: {exc}")
-            return 0
+            raise
 
 
 anime_mapper = AnimeMapper()
