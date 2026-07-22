@@ -1,10 +1,15 @@
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from comet.scrapers.aiostreams import AiostreamsScraper
 from comet.scrapers.comet import CometScraper
+from comet.scrapers.debridio import DebridioScraper
+from comet.scrapers.jackettio import JackettioScraper
 from comet.scrapers.mediafusion import MediaFusionScraper
 from comet.scrapers.models import ScrapeRequest
 from comet.scrapers.peerflix import PeerflixScraper
+from comet.scrapers.seadex import SeaDexScraper
+from comet.scrapers.torbox import TorboxScraper
 from comet.scrapers.torrentsdb import TorrentsDBScraper
 
 
@@ -178,6 +183,131 @@ class StreamAddonScraperTests(unittest.IsolatedAsyncioTestCase):
         scraper = CometScraper(None, _Session(payload), "https://comet.test")
 
         torrents = await scraper.scrape(REQUEST)
+
+        self.assertEqual(
+            [torrent["title"] for torrent in torrents], ["First.Movie", "Second.Movie"]
+        )
+        self.assertEqual([torrent["seeders"] for torrent in torrents], [12, None])
+
+    async def test_torbox_isolates_malformed_torrent(self):
+        payload = {
+            "data": {
+                "torrents": [
+                    {
+                        "raw_title": "First.Movie",
+                        "hash": "a" * 40,
+                        "last_known_seeders": 12,
+                        "size": 1_000,
+                        "tracker": "RARBG",
+                        "magnet": "magnet:?xt=urn:btih:first&tr=udp%3A%2F%2Ftracker.first",
+                    },
+                    {"raw_title": "Broken.Movie", "hash": "b" * 40},
+                    {
+                        "raw_title": "Second.Movie",
+                        "hash": "c" * 40,
+                        "last_known_seeders": 3,
+                        "size": 2_000,
+                        "tracker": "YTS",
+                        "magnet": "magnet:?xt=urn:btih:second",
+                    },
+                ]
+            }
+        }
+        scraper = TorboxScraper(None, _Session(payload))
+
+        torrents = await scraper.scrape(REQUEST)
+
+        self.assertEqual(
+            [torrent["title"] for torrent in torrents], ["First.Movie", "Second.Movie"]
+        )
+        self.assertEqual(torrents[0]["sources"], ["udp://tracker.first"])
+
+    async def test_jackettio_isolates_malformed_stream(self):
+        payload = {
+            "streams": [
+                {
+                    "title": "First.Movie\n💾 1 GB 👥 12 ⚙️ RARBG",
+                    "infoHash": "a" * 40,
+                },
+                None,
+                {"title": "Broken.Movie"},
+                {"title": "Second.Movie", "infoHash": "c" * 40},
+            ]
+        }
+        scraper = JackettioScraper(None, _Session(payload), "https://jackettio.test")
+
+        torrents = await scraper.scrape(REQUEST)
+
+        self.assertEqual(
+            [torrent["title"] for torrent in torrents], ["First.Movie", "Second.Movie"]
+        )
+        self.assertEqual([torrent["seeders"] for torrent in torrents], [12, None])
+
+    async def test_seadex_isolates_malformed_nested_records(self):
+        payload = {
+            "items": [
+                None,
+                {"expand": {"trs": [None, {"infoHash": "<redacted>"}]}},
+                {
+                    "expand": {
+                        "trs": [
+                            {
+                                "infoHash": "a" * 40,
+                                "files": [
+                                    None,
+                                    {"name": 42, "length": 10},
+                                    {"name": "First.Movie", "length": 1_000},
+                                ],
+                            },
+                            {
+                                "infoHash": "c" * 40,
+                                "files": [{"name": "Second.Movie", "length": 2_000}],
+                            },
+                        ]
+                    }
+                },
+            ]
+        }
+        scraper = SeaDexScraper(None, _Session(payload))
+        with (
+            patch("comet.scrapers.seadex.anime_mapper.is_loaded", return_value=True),
+            patch(
+                "comet.scrapers.seadex.anime_mapper.get_anilist_id",
+                new=AsyncMock(return_value=123),
+            ),
+        ):
+            torrents = await scraper.scrape(REQUEST)
+
+        self.assertEqual(
+            [torrent["title"] for torrent in torrents], ["First.Movie", "Second.Movie"]
+        )
+        self.assertEqual([torrent["fileIndex"] for torrent in torrents], [2, 0])
+
+    async def test_debridio_isolates_malformed_stream(self):
+        payload = {
+            "streams": [
+                {
+                    "title": "First.Movie\n💾 1 GB 👤 12 ⚙️ RARBG",
+                    "url": f"https://debrid.test/{'a' * 40}/play",
+                },
+                {"title": "Broken.Movie", "url": None},
+                {
+                    "title": "Second.Movie",
+                    "url": f"https://debrid.test/{'c' * 40}/play",
+                },
+            ]
+        }
+        scraper = DebridioScraper(None, _Session(payload))
+        with (
+            patch("comet.scrapers.debridio.settings.DEBRIDIO_API_KEY", "api"),
+            patch("comet.scrapers.debridio.settings.DEBRIDIO_PROVIDER", "provider"),
+            patch("comet.scrapers.debridio.settings.DEBRIDIO_PROVIDER_KEY", "key"),
+            patch(
+                "comet.scrapers.debridio.debridio_config.get_config",
+                return_value="config",
+            ),
+        ):
+            torrents = await scraper.scrape(REQUEST)
 
         self.assertEqual(
             [torrent["title"] for torrent in torrents], ["First.Movie", "Second.Movie"]
