@@ -21,19 +21,35 @@ from comet.cometnet.gossip import GossipEngine
 from comet.cometnet.interface import CometNetBackend
 from comet.cometnet.keystore import PublicKeyStore
 from comet.cometnet.nat import UPnPManager
-from comet.cometnet.pools import (JoinMode, MemberRole, PoolManifest,
-                                  PoolMember, PoolStore)
-from comet.cometnet.protocol import (AnyMessage, MessageType, PeerRequest,
-                                     PeerResponse, PoolDeleteMessage,
-                                     PoolJoinRequest, PoolManifestMessage,
-                                     PoolMemberUpdate, TorrentAnnounce,
-                                     TorrentMetadata)
+from comet.cometnet.pools import (
+    JoinMode,
+    MemberRole,
+    PoolManifest,
+    PoolMember,
+    PoolStore,
+)
+from comet.cometnet.protocol import (
+    AnyMessage,
+    MessageType,
+    PeerRequest,
+    PeerResponse,
+    PoolDeleteMessage,
+    PoolJoinRequest,
+    PoolManifestMessage,
+    PoolMemberUpdate,
+    TorrentAnnounce,
+    TorrentMetadata,
+)
 from comet.cometnet.reputation import ReputationStore
 from comet.cometnet.state import validate_state
 from comet.cometnet.transport import ConnectionManager
-from comet.cometnet.utils import (check_advertise_url_reachability,
-                                  check_system_clock_sync, is_internal_domain,
-                                  is_private_or_internal_ip, shutdown_crypto_executor)
+from comet.cometnet.utils import (
+    check_advertise_url_reachability,
+    check_system_clock_sync,
+    is_internal_domain,
+    is_private_or_internal_ip,
+    shutdown_crypto_executor,
+)
 from comet.cometnet.validation import validate_message_security
 from comet.core.logger import logger
 from comet.core.models import settings
@@ -150,7 +166,9 @@ class CometNetService(CometNetBackend):
             try:
                 await self._shutdown(save_state=False, force=True)
             except BaseException as cleanup_error:
-                logger.warning(f"Failed to clean partial CometNet startup: {cleanup_error}")
+                logger.warning(
+                    f"Failed to clean partial CometNet startup: {cleanup_error}"
+                )
             raise
 
     async def _start(self) -> None:
@@ -543,8 +561,10 @@ class CometNetService(CometNetBackend):
             except BaseException as error:
                 cleanup_errors.append(error)
                 result = []
-            if result and isinstance(result[0], BaseException) and not isinstance(
-                result[0], asyncio.CancelledError
+            if (
+                result
+                and isinstance(result[0], BaseException)
+                and not isinstance(result[0], asyncio.CancelledError)
             ):
                 cleanup_errors.append(result[0])
             self._state_save_task = None
@@ -989,11 +1009,7 @@ class CometNetService(CometNetBackend):
                     # Check for role changes
                     old_member = existing.get_member(my_key) if existing else None
                     new_member = manifest.get_member(my_key)
-                    if (
-                        old_member
-                        and new_member
-                        and old_member.role != new_member.role
-                    ):
+                    if old_member and new_member and old_member.role != new_member.role:
                         logger.log(
                             "COMETNET",
                             f"Role updated in pool {message.pool_id}: {old_member.role} -> {new_member.role}",
@@ -1956,6 +1972,20 @@ class CometNetService(CometNetBackend):
                     self.identity.public_key_hex,
                 ):
                     raise ValueError("CometNet state identity signature is invalid")
+                if state["node_id"] != self.identity.node_id:
+                    raise ValueError(
+                        "CometNet state belongs to a different node identity"
+                    )
+
+            # Prevalidate every synchronous component before the first live
+            # component is mutated. Discovery also builds complete candidates
+            # before publishing them in its async loader below.
+            if self.reputation:
+                ReputationStore.validate_persisted(state["reputation"])
+            if self.keystore:
+                PublicKeyStore.validate_persisted(
+                    state["keystore"], max_keys=self.keystore.max_keys
+                )
 
             # Validate addresses asynchronously before mutating any component.
             if self.discovery:

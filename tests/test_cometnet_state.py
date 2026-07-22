@@ -24,16 +24,7 @@ def current_state():
             },
             "blacklist": [],
         },
-        "keystore": {
-            "keys": {
-                "peer": {
-                    "public_key_hex": "abcd",
-                    "first_seen": 1.0,
-                    "last_seen": 2.0,
-                    "verified": True,
-                }
-            }
-        },
+        "keystore": {"keys": {}},
         "discovery": {
             "known_peers": [
                 {
@@ -65,6 +56,7 @@ def current_state():
 class Recorder:
     def __init__(self):
         self.calls = []
+        self.max_keys = 10000
 
     def from_dict(self, data):
         self.calls.append(data)
@@ -190,6 +182,34 @@ class CometNetStateTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(service.discovery.calls, [])
                 self.assertEqual(service.gossip.calls, [])
 
+    async def test_signed_state_must_belong_to_the_current_identity(self):
+        class Identity:
+            node_id = "current-node"
+            public_key_hex = "public-key"
+
+        state = current_state()
+        state["node_id"] = "different-node"
+        state["integrity_signature"] = "signature"
+
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, CometNetService.STATE_FILE).write_text(json.dumps(state))
+            service = CometNetService(keys_dir=directory)
+            service.identity = Identity()
+            service.reputation = Recorder()
+            service.keystore = Recorder()
+            service.discovery = AsyncRecorder()
+            service.gossip = Recorder()
+
+            with patch(
+                "comet.cometnet.manager.NodeIdentity.verify_hex", return_value=True
+            ):
+                await service._load_state()
+
+        self.assertEqual(service.reputation.calls, [])
+        self.assertEqual(service.keystore.calls, [])
+        self.assertEqual(service.discovery.calls, [])
+        self.assertEqual(service.gossip.calls, [])
+
     async def test_invalid_late_section_does_not_partially_restore_state(self):
         state = current_state()
         state["gossip"]["stats"]["messages_sent"] = "4"
@@ -199,6 +219,31 @@ class CometNetStateTests(unittest.IsolatedAsyncioTestCase):
             service = CometNetService(keys_dir=directory)
             service.reputation = Recorder()
             service.keystore = Recorder()
+            service.discovery = AsyncRecorder()
+            service.gossip = Recorder()
+
+            await service._load_state()
+
+        self.assertEqual(service.reputation.calls, [])
+        self.assertEqual(service.keystore.calls, [])
+        self.assertEqual(service.discovery.calls, [])
+        self.assertEqual(service.gossip.calls, [])
+
+    async def test_invalid_keystore_identity_is_rejected_before_any_restore(self):
+        state = current_state()
+        state["keystore"]["keys"]["wrong-node"] = {
+            "public_key_hex": "not-der",
+            "first_seen": 1,
+            "last_seen": 2,
+            "verified": True,
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, CometNetService.STATE_FILE).write_text(json.dumps(state))
+            service = CometNetService(keys_dir=directory)
+            service.reputation = Recorder()
+            service.keystore = Recorder()
+            service.keystore.max_keys = 100
             service.discovery = AsyncRecorder()
             service.gossip = Recorder()
 

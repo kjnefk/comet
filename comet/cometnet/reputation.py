@@ -293,23 +293,35 @@ class ReputationStore:
             "blacklist": sorted(self._blacklist),
         }
 
-    def from_dict(self, data: Dict) -> None:
-        """Load the store from a dictionary."""
+    @classmethod
+    def _decode_persisted(
+        cls, data: object
+    ) -> tuple[set[str], Dict[str, PeerReputation]]:
         if type(data) is not dict or set(data) != {"peers", "blacklist"}:
             raise ValueError("reputation store does not match the current schema")
         if type(data["peers"]) is not dict or type(data["blacklist"]) is not list:
             raise ValueError("reputation peers/blacklist containers are invalid")
 
         blacklist_values = [
-            self._validate_node_id(node_id) for node_id in data["blacklist"]
+            cls._validate_node_id(node_id) for node_id in data["blacklist"]
         ]
         if len(blacklist_values) != len(set(blacklist_values)):
             raise ValueError("blacklisted node IDs must be unique")
         blacklist = set(blacklist_values)
         peers = dict(
-            self._peer_from_persisted(node_id, value, blacklist)
+            cls._peer_from_persisted(node_id, value, blacklist)
             for node_id, value in data["peers"].items()
         )
+        return blacklist, peers
+
+    @classmethod
+    def validate_persisted(cls, data: object) -> None:
+        """Validate a complete persisted candidate without publishing it."""
+        cls._decode_persisted(data)
+
+    def from_dict(self, data: Dict) -> None:
+        """Load the store from a dictionary."""
+        blacklist, peers = self._decode_persisted(data)
 
         self._blacklist = blacklist
         self._peers = peers

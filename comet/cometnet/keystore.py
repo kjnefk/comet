@@ -219,14 +219,23 @@ class PublicKeyStore:
             }
         }
 
-    def from_dict(self, data: Dict) -> None:
-        """Load from persisted data."""
+    @classmethod
+    def validate_persisted(cls, data: object, *, max_keys: int = 10000) -> None:
+        """Validate a complete persisted candidate without publishing it."""
+        if type(max_keys) is not int or max_keys <= 0:
+            raise ValueError("max_keys must be a positive integer")
         if type(data) is not dict or set(data) != {"keys"}:
             raise ValueError("keystore does not match the current schema")
         if type(data["keys"]) is not dict:
             raise ValueError("keystore keys must be an object")
-        if len(data["keys"]) > self.max_keys:
+        if len(data["keys"]) > max_keys:
             raise ValueError("persisted keystore exceeds max_keys")
+        for node_id, value in data["keys"].items():
+            cls._peer_from_persisted(node_id, value)
+
+    def from_dict(self, data: Dict) -> None:
+        """Load from persisted data."""
+        self.validate_persisted(data, max_keys=self.max_keys)
 
         validated = [
             self._peer_from_persisted(node_id, value)
