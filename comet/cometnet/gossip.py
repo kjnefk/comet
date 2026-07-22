@@ -163,13 +163,15 @@ class GossipEngine:
         """Stop the gossip engine."""
         self._running = False
 
-        for task in [self._gossip_task, self._cleanup_task]:
-            if task:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        tasks = [
+            task for task in (self._gossip_task, self._cleanup_task) if task is not None
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._gossip_task = None
+        self._cleanup_task = None
 
         logger.log("COMETNET", "Gossip engine stopped")
 
@@ -523,6 +525,8 @@ class GossipEngine:
                 # Check if we have torrents to gossip
                 if not self._outgoing_queue:
                     continue
+                if not self._get_random_peers or not self._send_message:
+                    continue
 
                 total_sent = 0
                 while self._outgoing_queue:
@@ -534,14 +538,25 @@ class GossipEngine:
                         to_send.append(self._outgoing_queue.popleft())
 
                     # Create and send announce
-                    if self._get_random_peers and self._send_message and to_send:
-                        peers_reached = await self._repropagate(
-                            to_send, self.message_ttl
-                        )
+                    if to_send:
+                        try:
+                            peers_reached = await self._repropagate(
+                                to_send, self.message_ttl
+                            )
+                        except asyncio.CancelledError:
+                            self._outgoing_queue.extendleft(reversed(to_send))
+                            raise
+                        except Exception:
+                            self._outgoing_queue.extendleft(reversed(to_send))
+                            raise
+
+                        if peers_reached == 0:
+                            self._outgoing_queue.extendleft(reversed(to_send))
+                            break
+
                         # Only count torrents as propagated if at least one peer received them
-                        if peers_reached > 0:
-                            self.stats["torrents_propagated"] += len(to_send)
-                            total_sent += len(to_send)
+                        self.stats["torrents_propagated"] += len(to_send)
+                        total_sent += len(to_send)
             except asyncio.CancelledError:
                 break
             except Exception:

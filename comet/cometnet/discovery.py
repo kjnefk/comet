@@ -148,6 +148,7 @@ class DiscoveryService:
                 await self._discovery_task
             except asyncio.CancelledError:
                 pass
+            self._discovery_task = None
 
         logger.log("COMETNET", "Discovery service stopped")
 
