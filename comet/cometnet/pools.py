@@ -455,6 +455,7 @@ class PoolStore:
         self._pool_peers: Dict[str, Set[str]] = {}  # pool_id -> set of peer addresses
         self._dirty_manifests: Set[str] = set()  # Manifests that need saving
         self._mutation_lock = asyncio.Lock()
+        self._auxiliary_lock = asyncio.Lock()
 
         # Ensure directories exist
         self.manifests_dir.mkdir(parents=True, exist_ok=True)
@@ -558,6 +559,24 @@ class PoolStore:
         description: str = "",
         join_mode: JoinMode = JoinMode.INVITE,
     ) -> PoolManifest:
+        """Serialize creation of a new local pool."""
+        async with self._mutation_lock:
+            return await self._create_pool(
+                pool_id,
+                display_name,
+                identity,
+                description,
+                join_mode,
+            )
+
+    async def _create_pool(
+        self,
+        pool_id: str,
+        display_name: str,
+        identity,
+        description: str,
+        join_mode: JoinMode,
+    ) -> PoolManifest:
         """
         Create a new pool with this node as the admin.
 
@@ -599,6 +618,11 @@ class PoolStore:
         return manifest
 
     async def delete_pool(self, pool_id: str) -> bool:
+        """Serialize complete deletion of a local pool."""
+        async with self._mutation_lock:
+            return await self._delete_pool(pool_id)
+
+    async def _delete_pool(self, pool_id: str) -> bool:
         """Delete a pool manifest (local only)."""
         if pool_id not in self._manifests:
             return False
@@ -634,13 +658,15 @@ class PoolStore:
 
     async def add_membership(self, pool_id: str) -> None:
         """Persist and publish a pool membership."""
-        memberships = self._memberships | {pool_id}
-        await self._replace_memberships(memberships)
+        async with self._auxiliary_lock:
+            memberships = self._memberships | {pool_id}
+            await self._replace_memberships(memberships)
 
     async def remove_membership(self, pool_id: str) -> None:
         """Persist and publish removal of a pool membership."""
-        memberships = self._memberships - {pool_id}
-        await self._replace_memberships(memberships)
+        async with self._auxiliary_lock:
+            memberships = self._memberships - {pool_id}
+            await self._replace_memberships(memberships)
 
     async def add_member(
         self,
@@ -798,6 +824,15 @@ class PoolStore:
         pool_id: str,
         identity,  # NodeIdentity of the leaving member
     ) -> bool:
+        """Serialize complete departure from a local pool."""
+        async with self._mutation_lock:
+            return await self._leave_pool(pool_id, identity)
+
+    async def _leave_pool(
+        self,
+        pool_id: str,
+        identity,
+    ) -> bool:
         """
         Leave a pool (self-removal).
 
@@ -850,14 +885,16 @@ class PoolStore:
 
     async def subscribe(self, pool_id: str) -> None:
         """Subscribe to a pool (trust its members' torrents)."""
-        subscriptions = self._subscriptions | {pool_id}
-        await self._replace_subscriptions(subscriptions)
+        async with self._auxiliary_lock:
+            subscriptions = self._subscriptions | {pool_id}
+            await self._replace_subscriptions(subscriptions)
         logger.log("COMETNET", f"Subscribed to pool {pool_id}")
 
     async def unsubscribe(self, pool_id: str) -> None:
         """Unsubscribe from a pool."""
-        subscriptions = self._subscriptions - {pool_id}
-        await self._replace_subscriptions(subscriptions)
+        async with self._auxiliary_lock:
+            subscriptions = self._subscriptions - {pool_id}
+            await self._replace_subscriptions(subscriptions)
         logger.log("COMETNET", f"Unsubscribed from pool {pool_id}")
 
     def is_contributor_trusted(
@@ -1202,21 +1239,23 @@ class PoolStore:
         """
         if not peer_address:
             return
-        pool_peers = {
-            existing_pool_id: set(peers)
-            for existing_pool_id, peers in self._pool_peers.items()
-        }
-        pool_peers.setdefault(pool_id, set()).add(peer_address)
-        await self._replace_pool_peers(pool_peers)
+        async with self._auxiliary_lock:
+            pool_peers = {
+                existing_pool_id: set(peers)
+                for existing_pool_id, peers in self._pool_peers.items()
+            }
+            pool_peers.setdefault(pool_id, set()).add(peer_address)
+            await self._replace_pool_peers(pool_peers)
 
     async def remove_pool_peer(self, pool_id: str) -> None:
         """Persist and publish removal of all known peers for a pool."""
-        pool_peers = {
-            existing_pool_id: set(peers)
-            for existing_pool_id, peers in self._pool_peers.items()
-            if existing_pool_id != pool_id
-        }
-        await self._replace_pool_peers(pool_peers)
+        async with self._auxiliary_lock:
+            pool_peers = {
+                existing_pool_id: set(peers)
+                for existing_pool_id, peers in self._pool_peers.items()
+                if existing_pool_id != pool_id
+            }
+            await self._replace_pool_peers(pool_peers)
 
     def get_pool_peers(self, pool_id: str) -> Set[str]:
         """Get known peer addresses for a pool."""

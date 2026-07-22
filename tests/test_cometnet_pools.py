@@ -303,6 +303,26 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(store.get_subscriptions(), set())
             self.assertEqual(store.get_all_pool_peers(), {})
 
+    async def test_concurrent_auxiliary_additions_do_not_lose_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+
+            await asyncio.gather(
+                store.add_membership("pool-a"),
+                store.add_membership("pool-b"),
+                store.subscribe("pool-a"),
+                store.subscribe("pool-b"),
+                store.add_pool_peer("pool-a", "wss://one"),
+                store.add_pool_peer("pool-a", "wss://two"),
+            )
+
+            self.assertEqual(store.get_memberships(), {"pool-a", "pool-b"})
+            self.assertEqual(store.get_subscriptions(), {"pool-a", "pool-b"})
+            self.assertEqual(
+                store.get_pool_peers("pool-a"),
+                {"wss://one", "wss://two"},
+            )
+
     async def test_delete_pool_cleans_persisted_and_published_state(self):
         class Identity:
             public_key_hex = "creator-key"
@@ -424,6 +444,27 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
                 {member.public_key for member in manifest.members},
                 {"creator-key", "member-a", "member-b"},
             )
+
+    async def test_concurrent_duplicate_pool_creation_has_one_winner(self):
+        class Identity:
+            public_key_hex = "creator-key"
+
+            async def sign_hex_async(self, payload):
+                del payload
+                return "signature"
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            results = await asyncio.gather(
+                store.create_pool("pool-a", "First", Identity()),
+                store.create_pool("pool-a", "Second", Identity()),
+                return_exceptions=True,
+            )
+
+            self.assertEqual(sum(isinstance(result, PoolManifest) for result in results), 1)
+            self.assertEqual(sum(isinstance(result, ValueError) for result in results), 1)
+            self.assertEqual(set(store.get_all_manifests()), {"pool-a"})
+            self.assertEqual(store.get_memberships(), {"pool-a"})
 
     async def test_invite_limits_reject_boolean_zero_and_non_finite_values(self):
         class Identity:
