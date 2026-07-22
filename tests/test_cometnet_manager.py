@@ -32,6 +32,9 @@ class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
                 if self.error is not None:
                     raise self.error
 
+            def to_dict(self):
+                return {}
+
         class PoolStore:
             async def save(self):
                 raise RuntimeError("pool save failed")

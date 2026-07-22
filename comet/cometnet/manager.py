@@ -6,8 +6,6 @@ Orchestrates all components: Identity, Transport, Discovery, Gossip, Reputation,
 """
 
 import asyncio
-import hashlib
-import hmac
 import json
 import shutil
 import sys
@@ -2017,24 +2015,17 @@ class CometNetService(CometNetBackend):
                 content = await f.read()
                 state = validate_state(json.loads(content))
 
-            # Verify state file integrity (detect tampering)
-            stored_hash = state.pop("integrity_hash", None)
-            if stored_hash and self.identity:
-                # Compute expected hash
+            stored_signature = state.pop("integrity_signature", None)
+            if self.identity:
+                if not stored_signature:
+                    raise ValueError("CometNet state is missing its identity signature")
                 state_bytes = json.dumps(state, sort_keys=True).encode("utf-8")
-                expected_hash = hmac.new(
-                    self.identity.public_key_bytes[
-                        :32
-                    ],  # Use part of public key as HMAC key
+                if not NodeIdentity.verify_hex(
                     state_bytes,
-                    hashlib.sha256,
-                ).hexdigest()
-
-                if not hmac.compare_digest(stored_hash, expected_hash):
-                    logger.warning(
-                        f"State file integrity check failed (Stored: {stored_hash[:8]}..., Expected: {expected_hash[:8]}...). "
-                        "Loading state anyway to prevent data loss."
-                    )
+                    stored_signature,
+                    self.identity.public_key_hex,
+                ):
+                    raise ValueError("CometNet state identity signature is invalid")
 
             # Validate addresses asynchronously before mutating any component.
             if self.discovery:
@@ -2058,34 +2049,23 @@ class CometNetService(CometNetBackend):
     async def _save_state(self) -> None:
         """Save state to disk."""
         state_path = self.keys_dir / self.STATE_FILE
+        state = {
+            "saved_at": time.time(),
+            "node_id": self.identity.node_id if self.identity else None,
+            "reputation": self.reputation.to_dict() if self.reputation else {},
+            "keystore": self.keystore.to_dict() if self.keystore else {},
+            "discovery": self.discovery.to_dict() if self.discovery else {},
+            "gossip": self.gossip.to_dict() if self.gossip else {},
+        }
 
-        try:
-            state = {
-                "saved_at": time.time(),
-                "node_id": self.identity.node_id if self.identity else None,
-                "reputation": self.reputation.to_dict() if self.reputation else {},
-                "keystore": self.keystore.to_dict() if self.keystore else {},
-                "discovery": self.discovery.to_dict() if self.discovery else {},
-                "gossip": self.gossip.to_dict() if self.gossip else {},
-            }
+        if self.identity:
+            state_bytes = json.dumps(state, sort_keys=True).encode("utf-8")
+            state["integrity_signature"] = await self.identity.sign_hex_async(
+                state_bytes
+            )
 
-            # Add integrity hash to detect tampering
-            if self.identity:
-                state_bytes = json.dumps(state, sort_keys=True).encode("utf-8")
-                integrity_hash = hmac.new(
-                    self.identity.public_key_bytes[
-                        :32
-                    ],  # Use part of public key as HMAC key
-                    state_bytes,
-                    hashlib.sha256,
-                ).hexdigest()
-                state["integrity_hash"] = integrity_hash
-
-            self.keys_dir.mkdir(parents=True, exist_ok=True)
-
-            await write_text_atomic(state_path, json.dumps(state, indent=2))
-        except Exception as e:
-            logger.warning(f"Failed to save CometNet state: {e}")
+        self.keys_dir.mkdir(parents=True, exist_ok=True)
+        await write_text_atomic(state_path, json.dumps(state, indent=2))
 
 
 # Global instance (will be initialized by app.py if enabled)

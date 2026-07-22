@@ -57,8 +57,8 @@ def validate_state(value: Any) -> dict:
     _number(state["saved_at"], "saved_at")
     if state["node_id"] is not None:
         _string(state["node_id"], "node_id")
-    if "integrity_hash" in state:
-        _string(state["integrity_hash"], "integrity_hash")
+    if "integrity_signature" in state:
+        _string(state["integrity_signature"], "integrity_signature")
 
     reputation = _object(state["reputation"], "reputation")
     peers = _object(reputation["peers"], "reputation.peers")

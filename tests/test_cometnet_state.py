@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from comet.cometnet.manager import CometNetService
 
@@ -58,7 +59,6 @@ def current_state():
                 "torrents_skipped_mode": 11,
             }
         },
-        "integrity_hash": "hash",
     }
 
 
@@ -80,7 +80,116 @@ class FailingAsyncRecorder(Recorder):
         raise RuntimeError("address validation failed")
 
 
+class StateComponent:
+    def __init__(self, value):
+        self.value = value
+
+    def to_dict(self):
+        return self.value
+
+
 class CometNetStateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_state_save_failure_is_visible_to_its_owner(self):
+        class Identity:
+            node_id = "self"
+
+            async def sign_hex_async(self, data):
+                del data
+                raise RuntimeError("signing failed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            service = CometNetService(keys_dir=directory)
+            service.identity = Identity()
+            with self.assertRaisesRegex(RuntimeError, "signing failed"):
+                await service._save_state()
+
+            self.assertFalse(Path(directory, CometNetService.STATE_FILE).exists())
+
+    async def test_state_is_signed_and_verified_before_restore(self):
+        class Identity:
+            node_id = "self"
+            public_key_hex = "public-key"
+
+            async def sign_hex_async(self, data):
+                self.signed_data = data
+                return "signature"
+
+        state = current_state()
+        state.pop("saved_at")
+        state.pop("node_id")
+        identity = Identity()
+
+        with tempfile.TemporaryDirectory() as directory:
+            writer = CometNetService(keys_dir=directory)
+            writer.identity = identity
+            writer.reputation = StateComponent(state["reputation"])
+            writer.keystore = StateComponent(state["keystore"])
+            writer.discovery = StateComponent(state["discovery"])
+            writer.gossip = StateComponent(state["gossip"])
+            await writer._save_state()
+
+            saved = json.loads(Path(directory, CometNetService.STATE_FILE).read_text())
+            self.assertEqual(saved.pop("integrity_signature"), "signature")
+            self.assertEqual(
+                identity.signed_data,
+                json.dumps(saved, sort_keys=True).encode("utf-8"),
+            )
+
+            reader = CometNetService(keys_dir=directory)
+            reader.identity = identity
+            reader.reputation = Recorder()
+            reader.keystore = Recorder()
+            reader.discovery = AsyncRecorder()
+            reader.gossip = Recorder()
+            with patch(
+                "comet.cometnet.manager.NodeIdentity.verify_hex", return_value=True
+            ) as verify:
+                await reader._load_state()
+
+            verify.assert_called_once_with(
+                identity.signed_data, "signature", identity.public_key_hex
+            )
+            self.assertEqual(len(reader.reputation.calls), 1)
+            self.assertEqual(len(reader.keystore.calls), 1)
+            self.assertEqual(len(reader.discovery.calls), 1)
+            self.assertEqual(len(reader.gossip.calls), 1)
+
+    async def test_initialized_identity_rejects_unsigned_or_invalid_state(self):
+        class Identity:
+            public_key_hex = "public-key"
+
+        for signature in (None, "invalid"):
+            with (
+                self.subTest(signature=signature),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                state = current_state()
+                if signature is not None:
+                    state["integrity_signature"] = signature
+                Path(directory, CometNetService.STATE_FILE).write_text(
+                    json.dumps(state)
+                )
+                service = CometNetService(keys_dir=directory)
+                service.identity = Identity()
+                service.reputation = Recorder()
+                service.keystore = Recorder()
+                service.discovery = AsyncRecorder()
+                service.gossip = Recorder()
+
+                with patch(
+                    "comet.cometnet.manager.NodeIdentity.verify_hex", return_value=False
+                ) as verify:
+                    await service._load_state()
+
+                if signature is None:
+                    verify.assert_not_called()
+                else:
+                    verify.assert_called_once()
+                self.assertEqual(service.reputation.calls, [])
+                self.assertEqual(service.keystore.calls, [])
+                self.assertEqual(service.discovery.calls, [])
+                self.assertEqual(service.gossip.calls, [])
+
     async def test_invalid_late_section_does_not_partially_restore_state(self):
         state = current_state()
         state["gossip"]["stats"]["messages_sent"] = "4"
