@@ -5,7 +5,9 @@ import os
 import random
 import re
 import shutil
+import stat
 import zipfile
+from pathlib import Path
 
 import aiohttp
 import RTN
@@ -273,7 +275,20 @@ def process_file_sync(file_path):
 
 def extract_zip_sync(zip_path, extract_dir):
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        zip_ref.extractall(extract_dir)
+        target = Path(extract_dir).resolve()
+        members = zip_ref.infolist()
+        for member in members:
+            member_path = Path(member.filename)
+            mode = member.external_attr >> 16
+            if (
+                member_path.is_absolute()
+                or ".." in member_path.parts
+                or stat.S_ISLNK(mode)
+                or not (target / member_path).resolve().is_relative_to(target)
+            ):
+                raise ValueError(f"Unsafe DMM archive member: {member.filename}")
+
+        zip_ref.extractall(target, members)
 
 
 dmm_ingester = DMMIngester()
