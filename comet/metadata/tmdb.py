@@ -12,11 +12,15 @@ _MEDIA_CONFIG = {
         "path": "movie",
         "find_results": "movie_results",
         "alias_results": "titles",
+        "title": "title",
+        "original_title": "original_title",
     },
     "series": {
         "path": "tv",
         "find_results": "tv_results",
         "alias_results": "results",
+        "title": "name",
+        "original_title": "original_name",
     },
 }
 
@@ -114,6 +118,85 @@ def _extract_title_aliases(payload, result_key: str) -> dict[str, list[str]]:
     return aliases
 
 
+def _merge_title_aliases(
+    destination: dict[str, list[str]], source: dict[str, list[str]]
+) -> None:
+    for country, titles in source.items():
+        current = destination.setdefault(country, [])
+        seen = set(current)
+        for title in titles:
+            if title not in seen:
+                seen.add(title)
+                current.append(title)
+
+
+def _extract_original_title(payload: object, title_key: str) -> dict[str, list[str]]:
+    if not isinstance(payload, dict):
+        return {}
+
+    raw_title = payload.get(title_key)
+    if not isinstance(raw_title, str) or not (title := raw_title.strip()):
+        return {}
+
+    language = payload.get("original_language")
+    if (
+        isinstance(language, str)
+        and len(normalized_language := language.lower()) == 2
+        and normalized_language.isascii()
+        and normalized_language.isalpha()
+    ):
+        return {f"lang:{normalized_language}": [title]}
+    return {"ez": [title]}
+
+
+def _extract_translated_titles(payload: object, title_key: str) -> dict[str, list[str]]:
+    if not isinstance(payload, dict):
+        return {}
+    entries = payload.get("translations")
+    if not isinstance(entries, list):
+        return {}
+
+    aliases: dict[str, list[str]] = {}
+    seen: dict[str, set[str]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("data"), dict):
+            continue
+        language = entry.get("iso_639_1")
+        raw_title = entry["data"].get(title_key)
+        if (
+            not isinstance(language, str)
+            or len(language := language.lower()) != 2
+            or not language.isascii()
+            or not language.isalpha()
+            or not isinstance(raw_title, str)
+            or not (title := raw_title.strip())
+        ):
+            continue
+        language_seen = seen.setdefault(language, set())
+        if title not in language_seen:
+            language_seen.add(title)
+            aliases.setdefault(f"lang:{language}", []).append(title)
+    return aliases
+
+
+def _extract_all_title_aliases(payload: object, config: dict) -> dict[str, list[str]]:
+    if not isinstance(payload, dict):
+        return {}
+
+    aliases = _extract_original_title(payload, config["original_title"])
+    _merge_title_aliases(
+        aliases,
+        _extract_translated_titles(payload.get("translations"), config["title"]),
+    )
+    _merge_title_aliases(
+        aliases,
+        _extract_title_aliases(
+            payload.get("alternative_titles"), config["alias_results"]
+        ),
+    )
+    return aliases
+
+
 class TMDBApi:
     def __init__(self, session: aiohttp.ClientSession):
         self.session = session
@@ -172,17 +255,16 @@ class TMDBApi:
             return None
 
         data = await self._get_json(
-            f"{config['path']}/{tmdb_id}/alternative_titles",
+            f"{config['path']}/{tmdb_id}"
+            "?append_to_response=alternative_titles,translations",
             f"title aliases lookup for {imdb_id}",
         )
         if data is None:
             return None
-        if not isinstance(data, dict) or not isinstance(
-            data.get(config["alias_results"]), list
-        ):
+        if not isinstance(data, dict):
             logger.warning(f"TMDB: invalid title aliases response for {imdb_id}")
             return None
-        return _extract_title_aliases(data, config["alias_results"])
+        return _extract_all_title_aliases(data, config)
 
     async def has_watch_providers(self, tmdb_id: str):
         data = await self._get_json(

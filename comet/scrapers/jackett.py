@@ -4,7 +4,7 @@ from typing import List, Set
 from comet.core.constants import INDEXER_TIMEOUT
 from comet.core.logger import logger
 from comet.core.models import settings
-from comet.scrapers.base import BaseScraper
+from comet.scrapers.base import BaseScraper, deduplicate_torrents
 from comet.scrapers.models import ScrapeRequest, ScrapeResult
 from comet.services.indexer_manager import indexer_manager
 from comet.services.torrent_manager import (
@@ -91,7 +91,12 @@ class JackettScraper(BaseScraper):
     async def fetch_jackett_results(self, indexer: str, query: str):
         try:
             async with self.session.get(
-                f"{self.url}/api/v2.0/indexers/all/results?apikey={settings.JACKETT_API_KEY}&Query={query}&Tracker[]={indexer}",
+                f"{self.url}/api/v2.0/indexers/all/results",
+                params={
+                    "apikey": settings.JACKETT_API_KEY,
+                    "Query": query,
+                    "Tracker[]": indexer,
+                },
                 timeout=INDEXER_TIMEOUT,
             ) as response:
                 data = await response.json()
@@ -122,12 +127,7 @@ class JackettScraper(BaseScraper):
         torrents: List[ScrapeResult] = []
         seen: Set[str] = set()
 
-        queries = [request.title]
-        if request.media_type == "series" and request.episode is not None:
-            queries.append(f"{request.title} S{request.season:02d}")
-            queries.append(
-                f"{request.title} S{request.season:02d}E{request.episode:02d}"
-            )
+        queries = request.title_queries(include_episode_variants=True)
 
         try:
             tasks = []
@@ -174,4 +174,4 @@ class JackettScraper(BaseScraper):
                 f"Exception while getting torrents for {request.title} with Jackett: {e}"
             )
 
-        return torrents
+        return deduplicate_torrents(torrents)

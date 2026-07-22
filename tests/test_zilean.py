@@ -23,8 +23,8 @@ class _Session:
     def __init__(self, response):
         self.response = response
 
-    def get(self, url):
-        del url
+    def get(self, url, **kwargs):
+        del url, kwargs
         return self.response
 
 

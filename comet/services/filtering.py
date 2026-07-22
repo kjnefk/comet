@@ -7,7 +7,7 @@ from RTN import normalize_title, parse, title_match
 
 from comet.core.logger import logger
 from comet.core.models import settings
-from comet.utils.languages import COUNTRY_TO_LANGUAGE
+from comet.utils.languages import alias_language
 from comet.utils.parsing import ensure_multi_language
 
 if settings.RTN_FILTER_DEBUG:
@@ -229,7 +229,7 @@ def filter_worker(
                     alias_to_langs[scrubbed_t].add("neutral")
                 continue
 
-            lang = COUNTRY_TO_LANGUAGE.get(country)
+            lang = alias_language(country)
             for t in titles:
                 scrubbed_t = scrub(t)
                 tz_aliases.add(scrubbed_t)

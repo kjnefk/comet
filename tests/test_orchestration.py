@@ -2,10 +2,45 @@ import asyncio
 import unittest
 from unittest.mock import patch
 
-from comet.services.orchestration import TorrentManager, scraper_manager
+from comet.services.orchestration import TorrentManager, scraper_manager, settings
 
 
 class TorrentOrchestrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_scrapers_receive_titles_selected_from_configured_languages(self):
+        manager = TorrentManager(
+            media_type="movie",
+            media_full_id="tt123",
+            media_only_id="tt123",
+            title="The Life Ahead",
+            year=2020,
+            year_end=None,
+            season=None,
+            episode=None,
+            aliases={
+                "lang:it": ["La vita davanti a sé"],
+                "lang:fr": ["La Vie devant soi"],
+            },
+            remove_adult_content=False,
+        )
+        captured = []
+
+        async def capture_request(request):
+            captured.append(request)
+            if False:
+                yield None
+
+        with (
+            patch.object(settings, "INDEXER_LANGUAGES", ["it"]),
+            patch.object(scraper_manager, "scrape_all", new=capture_request),
+            patch.object(manager, "cache_torrents"),
+        ):
+            await manager.scrape_torrents()
+
+        self.assertEqual(
+            captured[0].query_titles,
+            ("The Life Ahead", "La vita davanti a sé"),
+        )
+
     async def test_filter_manager_logs_scraper_response_time(self):
         manager = TorrentManager(
             media_type="movie",

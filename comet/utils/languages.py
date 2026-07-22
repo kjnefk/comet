@@ -1,3 +1,6 @@
+import unicodedata
+
+
 COUNTRY_TO_LANGUAGE = {
     "ad": "fr",
     "ae": "ar",
@@ -211,3 +214,52 @@ COUNTRY_TO_LANGUAGE = {
     "zm": "en",
     "zw": "en",
 }
+
+
+def alias_language(scope: str) -> str | None:
+    if scope.startswith("lang:"):
+        language = scope[5:]
+        if len(language) == 2 and language.isascii() and language.isalpha():
+            return language
+        return None
+    return COUNTRY_TO_LANGUAGE.get(scope)
+
+
+def select_indexer_titles(
+    title: str,
+    aliases: object,
+    languages: list[str],
+) -> tuple[str, ...]:
+    """Return ordered, unique search titles for the configured languages."""
+
+    selected = []
+    seen = set()
+
+    def append(candidate: object):
+        if not isinstance(candidate, str) or not (
+            candidate := " ".join(candidate.split())
+        ):
+            return
+        identity = unicodedata.normalize("NFKC", candidate).casefold()
+        if identity in seen:
+            return
+        seen.add(identity)
+        selected.append(candidate)
+
+    append(title)
+    if not languages or not isinstance(aliases, dict):
+        return tuple(selected)
+
+    aliases_by_language: dict[str, list[str]] = {}
+    for country, country_titles in aliases.items():
+        if not isinstance(country, str) or not isinstance(country_titles, list):
+            continue
+        language = alias_language(country.lower())
+        if language is not None:
+            aliases_by_language.setdefault(language, []).extend(country_titles)
+
+    for language in languages:
+        for alias in aliases_by_language.get(language, ()):
+            append(alias)
+
+    return tuple(selected)

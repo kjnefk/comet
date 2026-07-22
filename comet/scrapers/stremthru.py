@@ -56,9 +56,7 @@ class StremthruScraper(BaseScraper):
                     if size is None or info_hash is None:
                         continue
 
-                    tracker = "StremThru" + (
-                        f"|{indexer_name}" if indexer_name else ""
-                    )
+                    tracker = "StremThru" + (f"|{indexer_name}" if indexer_name else "")
 
                     torrents.append(
                         {

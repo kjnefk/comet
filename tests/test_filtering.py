@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from RTN import parse
 
@@ -7,6 +8,7 @@ from comet.services.filtering import (
     _normalize_aliases,
     filter_worker,
     quick_alias_match,
+    settings,
 )
 
 
@@ -55,6 +57,25 @@ class AliasFilteringTests(unittest.TestCase):
         )
 
         self.assertEqual(actual, [])
+
+    def test_language_scoped_alias_sets_the_exact_language(self):
+        torrent = {
+            "title": "Il.Postino.2020.1080p.WEB-DL",
+            "infoHash": "1" * 40,
+        }
+
+        with patch.object(settings, "SMART_LANGUAGE_DETECTION", True):
+            actual = filter_worker(
+                [torrent],
+                "The Postman",
+                2020,
+                None,
+                "movie",
+                {"lang:it": ["Il Postino"]},
+                False,
+            )
+
+        self.assertEqual(actual[0]["parsed"].languages, ["it"])
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import unittest
 
 from comet.metadata.tmdb import (
     TMDBApi,
+    _extract_all_title_aliases,
     _extract_title_aliases,
     _extract_tmdb_id,
     _extract_upcoming_release_date,
@@ -68,6 +69,42 @@ class TmdbMetadataTests(unittest.TestCase):
         )
         self.assertEqual(_extract_title_aliases({"titles": {}}, "titles"), {})
 
+    def test_original_translated_and_alternative_titles_are_merged(self):
+        config = {
+            "title": "title",
+            "original_title": "original_title",
+            "alias_results": "titles",
+        }
+        payload = {
+            "original_title": " La vita davanti a sé ",
+            "original_language": "it",
+            "origin_country": ["IT"],
+            "translations": {
+                "translations": [
+                    {
+                        "iso_3166_1": "FR",
+                        "iso_639_1": "fr",
+                        "data": {"title": "La Vie devant soi"},
+                    },
+                    None,
+                ]
+            },
+            "alternative_titles": {
+                "titles": [
+                    {"iso_3166_1": "US", "title": "The Life Ahead"},
+                ]
+            },
+        }
+
+        self.assertEqual(
+            _extract_all_title_aliases(payload, config),
+            {
+                "lang:it": ["La vita davanti a sé"],
+                "lang:fr": ["La Vie devant soi"],
+                "us": ["The Life Ahead"],
+            },
+        )
+
     def test_release_date_extractor_keeps_valid_current_entries(self):
         payload = {
             "results": [
@@ -101,15 +138,25 @@ class TmdbApiTests(unittest.IsolatedAsyncioTestCase):
             ),
             _Response(
                 200,
-                {"results": [{"title": "La casa de papel", "iso_3166_1": "ES"}]},
+                {
+                    "original_name": "La casa de papel",
+                    "original_language": "es",
+                    "origin_country": ["ES"],
+                    "translations": {"translations": []},
+                    "alternative_titles": {"results": []},
+                },
             ),
         )
 
         aliases = await TMDBApi(session).get_title_aliases("series", "tt6468322")
 
-        self.assertEqual(aliases, {"es": ["La casa de papel"]})
+        self.assertEqual(aliases, {"lang:es": ["La casa de papel"]})
         self.assertTrue(session.requests[0][0].endswith("external_source=imdb_id"))
-        self.assertTrue(session.requests[1][0].endswith("tv/456/alternative_titles"))
+        self.assertTrue(
+            session.requests[1][0].endswith(
+                "tv/456?append_to_response=alternative_titles,translations"
+            )
+        )
 
     async def test_title_alias_lookup_reports_provider_failure(self):
         session = _Session(_Response(503, {"status_message": "unavailable"}))

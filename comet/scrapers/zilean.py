@@ -1,5 +1,7 @@
+import asyncio
+
 from comet.core.logger import logger
-from comet.scrapers.base import BaseScraper
+from comet.scrapers.base import BaseScraper, deduplicate_torrents
 from comet.scrapers.models import ScrapeRequest
 
 
@@ -34,26 +36,32 @@ class ZileanScraper(BaseScraper):
     async def scrape(self, request: ScrapeRequest):
         torrents = []
         try:
-            show = (
-                f"&season={request.season}&episode={request.episode}"
-                if request.media_type == "series"
-                else ""
+
+            async def fetch(title):
+                params = {"query": title}
+                if request.media_type == "series":
+                    params.update(
+                        {"season": request.season, "episode": request.episode}
+                    )
+                async with self.session.get(
+                    f"{self.url}/dmm/filtered", params=params
+                ) as response:
+                    return await response.json()
+
+            responses = await asyncio.gather(
+                *(fetch(title) for title in request.query_titles),
+                return_exceptions=True,
             )
-            async with self.session.get(
-                f"{self.url}/dmm/filtered?query={request.title}{show}"
-            ) as response:
-                data = await response.json()
-
-            if not isinstance(data, list):
-                return []
-
-            for result in data:
-                parsed = self._parse_result(result)
-                if parsed is not None:
-                    torrents.append(parsed)
+            for data in responses:
+                if not isinstance(data, list):
+                    continue
+                for result in data:
+                    parsed = self._parse_result(result)
+                    if parsed is not None:
+                        torrents.append(parsed)
         except Exception as e:
             logger.warning(
                 f"Exception while getting torrents for {request.title} with Zilean ({self.url}): {e}"
             )
 
-        return torrents
+        return deduplicate_torrents(torrents)

@@ -977,4 +977,5 @@ MIGRATIONS = [
         _migration_series_episode_index_refresh,
     ),
     ("2026072201_tmdb_title_aliases", _migration_tmdb_title_aliases),
+    ("2026072202_tmdb_localized_titles", _migration_tmdb_title_aliases),
 ]

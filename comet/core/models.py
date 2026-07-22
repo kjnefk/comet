@@ -183,6 +183,7 @@ class AppSettings(BaseSettings):
     INDEXER_MANAGER_INDEXERS: List[str] = []
     INDEXER_MANAGER_UPDATE_INTERVAL: Optional[int] = 900
     INDEXER_MANAGER_WAIT_TIMEOUT: Optional[int] = 30
+    INDEXER_LANGUAGES: List[str] = Field(default_factory=list)
     SCRAPE_JACKETT: Union[bool, str] = False
     JACKETT_URL: Optional[str] = "http://127.0.0.1:9117"
     JACKETT_API_KEY: Optional[str] = None
@@ -555,6 +556,25 @@ class AppSettings(BaseSettings):
     def indexer_manager_indexers_normalization(cls, v, values):
         v = [indexer.replace(" ", "").lower() for indexer in v]
         return v
+
+    @field_validator("INDEXER_LANGUAGES")
+    def normalize_indexer_languages(cls, value):
+        languages = []
+        seen = set()
+        for language in value:
+            if (
+                not isinstance(language, str)
+                or len(normalized := language.strip().lower()) != 2
+                or not normalized.isascii()
+                or not normalized.isalpha()
+            ):
+                raise ValueError(
+                    "INDEXER_LANGUAGES entries must be ISO 639-1 language codes"
+                )
+            if normalized not in seen:
+                seen.add(normalized)
+                languages.append(normalized)
+        return languages
 
     @field_validator(
         "INDEXER_MANAGER_URL",

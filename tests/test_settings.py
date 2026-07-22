@@ -6,6 +6,25 @@ from comet.core.models import AppSettings
 
 
 class AppSettingsTests(unittest.TestCase):
+    def test_indexer_languages_are_normalized_and_deduplicated(self):
+        settings = AppSettings(
+            _env_file=None,
+            INDEXER_LANGUAGES=[" IT ", "fr", "it"],
+        )
+
+        self.assertEqual(settings.INDEXER_LANGUAGES, ["it", "fr"])
+
+    def test_invalid_indexer_language_fails_configuration(self):
+        for language in ("ita", "i", "fr-FR", "1t"):
+            with (
+                self.subTest(language=language),
+                self.assertRaisesRegex(ValidationError, "ISO 639-1"),
+            ):
+                AppSettings(_env_file=None, INDEXER_LANGUAGES=[language])
+
+        with self.assertRaises(ValidationError):
+            AppSettings(_env_file=None, INDEXER_LANGUAGES=[1])
+
     def test_scraper_modes_normalize_documented_values(self):
         settings = AppSettings(
             _env_file=None,

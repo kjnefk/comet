@@ -1,5 +1,7 @@
+import asyncio
+
 from comet.core.logger import log_scraper_error
-from comet.scrapers.base import BaseScraper
+from comet.scrapers.base import BaseScraper, deduplicate_torrents
 from comet.scrapers.models import ScrapeRequest
 from comet.services.torrent_manager import extract_trackers_from_magnet
 
@@ -99,17 +101,26 @@ class NekoBTScraper(BaseScraper):
 
     async def scrape(self, request: ScrapeRequest) -> list[dict]:
         try:
-            torrents, media_id = await self._fetch_all({"query": request.title})
-
-            if media_id:
-                media_torrents, _ = await self._fetch_all({"media_id": media_id})
-                seen = {t["infoHash"] for t in torrents}
-                for t in media_torrents:
-                    if t["infoHash"] not in seen:
-                        torrents.append(t)
-                        seen.add(t["infoHash"])
-
-            return torrents
+            query_results = await asyncio.gather(
+                *(self._fetch_all({"query": title}) for title in request.query_titles)
+            )
+            torrents = [
+                torrent
+                for query_torrents, _ in query_results
+                for torrent in query_torrents
+            ]
+            media_ids = tuple(
+                dict.fromkeys(media_id for _, media_id in query_results if media_id)
+            )
+            media_results = await asyncio.gather(
+                *(self._fetch_all({"media_id": media_id}) for media_id in media_ids)
+            )
+            torrents.extend(
+                torrent
+                for media_torrents, _ in media_results
+                for torrent in media_torrents
+            )
+            return deduplicate_torrents(torrents)
         except Exception as e:
             log_scraper_error("NekoBT", BASE_URL, request.media_id, e)
             return []

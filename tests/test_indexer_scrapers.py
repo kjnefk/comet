@@ -50,6 +50,43 @@ class _StremthruSession:
 
 
 class IndexerScraperTests(unittest.IsolatedAsyncioTestCase):
+    async def test_indexers_search_every_localized_episode_title(self):
+        request = ScrapeRequest(
+            media_type="series",
+            media_id="tt123:1:2",
+            media_only_id="tt123",
+            title="English",
+            season=1,
+            episode=2,
+            search_titles=("English", "Italiano"),
+        )
+        expected_queries = {
+            "English",
+            "English S01",
+            "English S01E02",
+            "Italiano",
+            "Italiano S01",
+            "Italiano S01E02",
+        }
+
+        jackett = JackettScraper(None, None, "https://jackett.test")
+        jackett.fetch_jackett_results = AsyncMock(return_value=[])
+        with patch("comet.scrapers.jackett.settings.JACKETT_INDEXERS", ["indexer"]):
+            await jackett.scrape(request)
+        self.assertEqual(
+            {call.args[1] for call in jackett.fetch_jackett_results.await_args_list},
+            expected_queries,
+        )
+
+        prowlarr = ProwlarrScraper(None, None, "https://prowlarr.test")
+        prowlarr._fetch_search_results = AsyncMock(return_value=[])
+        with patch("comet.scrapers.prowlarr.settings.PROWLARR_INDEXERS", ["1"]):
+            await prowlarr.scrape(request)
+        self.assertEqual(
+            {call.args[0] for call in prowlarr._fetch_search_results.await_args_list},
+            expected_queries,
+        )
+
     async def test_jackett_isolates_malformed_and_failed_results(self):
         results = [
             {"Details": "first", "token": "first"},

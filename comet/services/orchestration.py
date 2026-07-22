@@ -4,13 +4,14 @@ from RTN import DefaultRanking, ParsedData
 
 from comet.core.execution import get_executor
 from comet.core.logger import logger
-from comet.core.models import CometSettingsModel, database
+from comet.core.models import CometSettingsModel, database, settings
 from comet.scrapers.manager import scraper_manager
 from comet.scrapers.models import ScrapeRequest
 from comet.services.filtering import filter_worker
 from comet.services.ranking import rank_worker
 from comet.services.torrent_manager import torrent_update_queue
 from comet.utils.media_ids import normalize_cache_media_ids
+from comet.utils.languages import select_indexer_titles
 from comet.utils.parsing import (
     ensure_multi_language,
     load_cached_parsed,
@@ -133,6 +134,11 @@ class TorrentManager:
             season=self.search_season,
             episode=self.search_episode,
             context=self.context,
+            search_titles=select_indexer_titles(
+                self.title,
+                self.aliases,
+                settings.INDEXER_LANGUAGES,
+            ),
         )
 
         async for scraper_name, results, response_time in scraper_manager.scrape_all(
@@ -307,9 +313,7 @@ class TorrentManager:
             return
 
         if len(torrents) == 0:
-            logger.log(
-                "SCRAPER", f"Scraper {scraper_name} found 0 torrents.{timing}"
-            )
+            logger.log("SCRAPER", f"Scraper {scraper_name} found 0 torrents.{timing}")
             return
 
         valid_torrents = [

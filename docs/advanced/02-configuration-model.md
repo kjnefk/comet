@@ -58,6 +58,7 @@ Behavior:
 5. Scrapers/indexers
 - `SCRAPE_*` flags and related URL/API key variables
 - Jackett/Prowlarr indexer manager settings
+- `INDEXER_LANGUAGES`: ISO 639-1 language codes whose TMDB original/localized titles are searched in addition to the canonical title by every title-based scraper. The default `[]` preserves single-title searches.
 
 6. Background jobs
 - `BACKGROUND_SCRAPER_*`
