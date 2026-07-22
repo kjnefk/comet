@@ -8,10 +8,10 @@ Uses MsgPack for efficient binary serialization.
 import math
 import time
 from enum import Enum
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
 import msgpack
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from comet.cometnet.utils import canonicalize_data
 from comet.utils.formatting import normalize_info_hash
@@ -45,16 +45,25 @@ class MessageType(str, Enum):
 class BaseMessage(BaseModel):
     """Base class for all CometNet messages."""
 
+    model_config = ConfigDict(extra="forbid")
+
     version: str = Field(default=PROTOCOL_VERSION)
     type: MessageType
     timestamp: float = Field(default_factory=time.time)
     sender_id: str = ""  # Node ID of the sender
     signature: str = ""  # Hex-encoded signature
 
+    @field_validator("version", mode="before")
+    @classmethod
+    def validate_protocol_version(cls, value):
+        if type(value) is not str or value != PROTOCOL_VERSION:
+            raise ValueError(f"version must be {PROTOCOL_VERSION!r}")
+        return value
+
     @field_validator("timestamp", mode="before")
     @classmethod
     def reject_boolean_timestamp(cls, value):
-        if isinstance(value, bool):
+        if type(value) not in (int, float):
             raise ValueError("timestamp must be a finite number")
         return value
 
@@ -92,7 +101,7 @@ class HandshakeMessage(BaseMessage):
     and future encrypted communications.
     """
 
-    type: MessageType = MessageType.HANDSHAKE
+    type: Literal[MessageType.HANDSHAKE] = MessageType.HANDSHAKE
     public_key: str = ""  # Hex-encoded public key
     listen_port: int = 0  # Port this node is listening on (for reverse connections)
     public_url: Optional[str] = None  # Full public URL (for reverse proxies)
@@ -100,41 +109,68 @@ class HandshakeMessage(BaseMessage):
     capabilities: List[str] = Field(default_factory=list)  # Future extension
     network_token: Optional[str] = None  # HMAC token for private network auth
 
+    @field_validator("listen_port", mode="before")
+    @classmethod
+    def validate_listen_port(cls, value):
+        if type(value) is not int or not 0 <= value <= 65535:
+            raise ValueError("listen_port must be an integer between 0 and 65535")
+        return value
+
 
 class PingMessage(BaseMessage):
     """Ping message to check if a peer is still alive."""
 
-    type: MessageType = MessageType.PING
+    type: Literal[MessageType.PING] = MessageType.PING
     nonce: str = ""  # Random nonce for matching pong
 
 
 class PongMessage(BaseMessage):
     """Pong response to a ping message."""
 
-    type: MessageType = MessageType.PONG
+    type: Literal[MessageType.PONG] = MessageType.PONG
     nonce: str = ""  # Echo of the ping nonce
 
 
 class PeerInfo(BaseModel):
     """Information about a peer for exchange."""
 
+    model_config = ConfigDict(extra="forbid")
+
     node_id: str
     address: str  # WebSocket URL (e.g., wss://host:port)
     last_seen: float = 0.0
     reputation: float = 50.0
 
+    @field_validator("last_seen", "reputation", mode="before")
+    @classmethod
+    def validate_numeric_fields(cls, value, info):
+        if type(value) not in (int, float) or not math.isfinite(value):
+            raise ValueError(f"{info.field_name} must be a finite number")
+        if info.field_name == "last_seen" and value < 0:
+            raise ValueError("last_seen must be non-negative")
+        if info.field_name == "reputation" and not 0 <= value <= 100:
+            raise ValueError("reputation must be between 0 and 100")
+        return value
+
 
 class PeerRequest(BaseMessage):
     """Request for a list of known peers."""
 
-    type: MessageType = MessageType.PEER_REQUEST
+    type: Literal[MessageType.PEER_REQUEST] = MessageType.PEER_REQUEST
     max_peers: int = 20  # Maximum number of peers to return
+
+    @field_validator("max_peers", mode="before")
+    @classmethod
+    def validate_max_peers(cls, value):
+        if type(value) is not int or not 1 <= value <= 1000:
+            raise ValueError("max_peers must be an integer between 1 and 1000")
+        return value
 
 
 class PeerResponse(BaseMessage):
     """Response containing a list of known peers."""
 
-    type: MessageType = MessageType.PEER_RESPONSE
+    type: Literal[MessageType.PEER_RESPONSE] = MessageType.PEER_RESPONSE
     peers: List[PeerInfo] = Field(default_factory=list)
 
 
@@ -195,8 +231,8 @@ class TorrentMetadata(BaseModel):
     )
     @classmethod
     def reject_boolean_integer_fields(cls, value):
-        if isinstance(value, bool):
-            raise ValueError("torrent integer fields cannot be booleans")
+        if value is not None and type(value) is not int:
+            raise ValueError("torrent integer fields must be integers")
         return value
 
     @field_validator("seeders", "file_index", "season", "episode")
@@ -211,7 +247,7 @@ class TorrentMetadata(BaseModel):
     @field_validator("updated_at", mode="before")
     @classmethod
     def reject_boolean_updated_at(cls, value):
-        if isinstance(value, bool):
+        if type(value) not in (int, float):
             raise ValueError("updated_at must be a finite number")
         return value
 
@@ -243,7 +279,7 @@ class TorrentAnnounce(BaseMessage):
     This is the primary gossip message for propagating torrent metadata.
     """
 
-    type: MessageType = MessageType.TORRENT_ANNOUNCE
+    type: Literal[MessageType.TORRENT_ANNOUNCE] = MessageType.TORRENT_ANNOUNCE
     torrents: List[TorrentMetadata] = Field(default_factory=list)
     ttl: int = 5  # Time-to-live (hops remaining)
 
@@ -255,6 +291,13 @@ class TorrentAnnounce(BaseMessage):
             raise ValueError("Maximum 1000 torrents per announce message")
         return v
 
+    @field_validator("ttl", mode="before")
+    @classmethod
+    def validate_ttl(cls, value):
+        if type(value) is not int or not 1 <= value <= 32:
+            raise ValueError("ttl must be an integer between 1 and 32")
+        return value
+
     visited_nodes: List[str] = Field(
         default_factory=list
     )  # List of nodes that have seen this message
@@ -263,16 +306,23 @@ class TorrentAnnounce(BaseMessage):
 class TorrentQuery(BaseMessage):
     """Query for specific torrents (by info_hash or media ID)."""
 
-    type: MessageType = MessageType.TORRENT_QUERY
+    type: Literal[MessageType.TORRENT_QUERY] = MessageType.TORRENT_QUERY
     info_hashes: List[str] = Field(default_factory=list)
     imdb_id: Optional[str] = None
     limit: int = 50
+
+    @field_validator("limit", mode="before")
+    @classmethod
+    def validate_limit(cls, value):
+        if type(value) is not int or not 1 <= value <= 1000:
+            raise ValueError("limit must be an integer between 1 and 1000")
+        return value
 
 
 class TorrentResponse(BaseMessage):
     """Response to a torrent query."""
 
-    type: MessageType = MessageType.TORRENT_RESPONSE
+    type: Literal[MessageType.TORRENT_RESPONSE] = MessageType.TORRENT_RESPONSE
     torrents: List[TorrentMetadata] = Field(default_factory=list)
     query_id: str = ""  # Reference to the original query
 
@@ -287,23 +337,37 @@ class PoolManifestMessage(BaseMessage):
     Used to propagate pool definitions across the network.
     """
 
-    type: MessageType = MessageType.POOL_MANIFEST
+    type: Literal[MessageType.POOL_MANIFEST] = MessageType.POOL_MANIFEST
     pool_id: str
     display_name: str
     description: str = ""
     creator_key: str
     members: List[dict] = Field(default_factory=list)  # Serialized PoolMembers
     join_mode: str = "invite"
-    version: int = 1
+    manifest_version: int = 1
     created_at: float = 0.0  # Creation timestamp
     updated_at: float = 0.0  # Last update timestamp
     manifest_signatures: dict = Field(default_factory=dict)  # admin_key -> sig
+
+    @field_validator("manifest_version", mode="before")
+    @classmethod
+    def validate_manifest_version(cls, value):
+        if type(value) is not int or value < 1:
+            raise ValueError("manifest_version must be a positive integer")
+        return value
+
+    @field_validator("created_at", "updated_at", mode="before")
+    @classmethod
+    def validate_manifest_timestamp(cls, value, info):
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise ValueError(f"{info.field_name} must be a finite non-negative number")
+        return value
 
 
 class PoolJoinRequest(BaseMessage):
     """Request to join a pool."""
 
-    type: MessageType = MessageType.POOL_JOIN_REQUEST
+    type: Literal[MessageType.POOL_JOIN_REQUEST] = MessageType.POOL_JOIN_REQUEST
     pool_id: str
     invite_code: Optional[str] = None  # For invite-based join
 
@@ -314,7 +378,7 @@ class PoolJoinRequest(BaseMessage):
 class PoolMemberUpdate(BaseMessage):
     """Notify network of membership changes."""
 
-    type: MessageType = MessageType.POOL_MEMBER_UPDATE
+    type: Literal[MessageType.POOL_MEMBER_UPDATE] = MessageType.POOL_MEMBER_UPDATE
     pool_id: str
     action: str  # "add", "remove", "promote", "demote"
     member_key: str
@@ -328,7 +392,7 @@ class PoolMemberUpdate(BaseMessage):
 class PoolDeleteMessage(BaseMessage):
     """Notify network that a pool has been deleted by its creator."""
 
-    type: MessageType = MessageType.POOL_DELETE
+    type: Literal[MessageType.POOL_DELETE] = MessageType.POOL_DELETE
     pool_id: str
     deleted_by: str = ""  # Public key of the creator who deleted it
 
@@ -361,6 +425,8 @@ def parse_message(data: Union[str, bytes]) -> Optional[AnyMessage]:
             return None
 
         payload = msgpack.unpackb(data, raw=False)
+        if not isinstance(payload, dict):
+            return None
         msg_type = payload.get("type")
 
         # Core messages
@@ -391,5 +457,5 @@ def parse_message(data: Union[str, bytes]) -> Optional[AnyMessage]:
             return PoolDeleteMessage.model_validate(payload)
         else:
             return None
-    except (ValueError, Exception):
+    except (msgpack.exceptions.UnpackException, TypeError, ValueError):
         return None
