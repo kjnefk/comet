@@ -858,7 +858,7 @@ class ConnectionManager:
             pass
         finally:
             # Clean up connection
-            if conn.node_id in self._connections:
+            if self._connections.get(conn.node_id) is conn:
                 # Decrement IP connection counter (only for inbound connections that we track)
                 if not conn.is_outbound and conn.client_ip:
                     ip = conn.client_ip
@@ -868,7 +868,7 @@ class ConnectionManager:
                         )
                         if self._connections_per_ip[ip] == 0:
                             del self._connections_per_ip[ip]
-                del self._connections[conn.node_id]
+                self._connections.pop(conn.node_id, None)
             logger.log(
                 "COMETNET",
                 f"Disconnected from peer {conn.node_id[:8]} ({conn.alias or 'no alias'})",
@@ -1006,9 +1006,11 @@ class ConnectionManager:
 
     async def disconnect_peer(self, node_id: str) -> None:
         """Disconnect from a specific peer."""
-        if node_id in self._connections:
-            await self._connections[node_id].close()
-            del self._connections[node_id]
+        connection = self._connections.get(node_id)
+        if connection is not None:
+            await connection.close()
+            if self._connections.get(node_id) is connection:
+                self._connections.pop(node_id, None)
 
     async def _remediate_eclipse_attack(self) -> None:
         """

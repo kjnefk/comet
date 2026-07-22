@@ -3,7 +3,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from comet.cometnet.transport import ConnectionManager
+from comet.cometnet.transport import ConnectionManager, PeerConnection
 
 
 class _Identity:
@@ -34,6 +34,34 @@ class _Peer:
 
 
 class CometNetTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_disconnect_tolerates_receive_loop_removing_connection(self):
+        manager = ConnectionManager(_Identity())
+
+        class Connection:
+            async def close(inner_self):
+                del inner_self
+                manager._connections.pop("peer", None)
+
+        manager._connections["peer"] = Connection()
+
+        await manager.disconnect_peer("peer")
+
+        self.assertNotIn("peer", manager._connections)
+
+    async def test_old_receive_loop_does_not_remove_replacement_connection(self):
+        manager = ConnectionManager(_Identity())
+        old_connection = PeerConnection(
+            node_id="peer",
+            address="ws://old",
+            websocket=object(),
+        )
+        replacement = object()
+        manager._connections["peer"] = replacement
+
+        await manager._receive_loop(old_connection)
+
+        self.assertIs(manager._connections["peer"], replacement)
+
     async def test_ping_loop_owns_and_cancels_send_operations(self):
         manager = ConnectionManager(_Identity())
         peer = _Peer()
