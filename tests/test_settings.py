@@ -68,3 +68,59 @@ class AppSettingsTests(unittest.TestCase):
             "CometNet operational values must be finite and greater than zero",
         ):
             AppSettings(_env_file=None, COMETNET_GOSSIP_INTERVAL=float("inf"))
+
+    def test_http_operational_values_reject_invalid_ranges(self):
+        nonnegative_fields = (
+            "MEMORY_TRIM_INTERVAL",
+            "RATELIMIT_MAX_RETRIES",
+            "HTTP_CLIENT_TTL_DNS_CACHE",
+            "HTTP_CACHE_STREAMS_TTL",
+            "HTTP_CACHE_STALE_WHILE_REVALIDATE",
+            "HTTP_CACHE_MANIFEST_TTL",
+            "HTTP_CACHE_CONFIGURE_TTL",
+        )
+        positive_fields = (
+            "RATELIMIT_RETRY_BASE_DELAY",
+            "HTTP_CLIENT_LIMIT",
+            "HTTP_CLIENT_LIMIT_PER_HOST",
+            "HTTP_CLIENT_KEEPALIVE_TIMEOUT",
+            "HTTP_CLIENT_TIMEOUT_TOTAL",
+        )
+
+        for field in nonnegative_fields:
+            for value in (-1, float("inf"), None):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(ValidationError):
+                        AppSettings(_env_file=None, **{field: value})
+
+        for field in positive_fields:
+            for value in (0, -1, float("nan"), None):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(ValidationError):
+                        AppSettings(_env_file=None, **{field: value})
+
+    def test_http_operational_values_reject_booleans_and_excessive_retries(self):
+        for field in (
+            "MEMORY_TRIM_INTERVAL",
+            "RATELIMIT_MAX_RETRIES",
+            "RATELIMIT_RETRY_BASE_DELAY",
+            "HTTP_CLIENT_LIMIT",
+            "HTTP_CLIENT_TIMEOUT_TOTAL",
+            "HTTP_CACHE_STREAMS_TTL",
+        ):
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(ValidationError, "cannot be booleans"):
+                    AppSettings(_env_file=None, **{field: True})
+
+        with self.assertRaisesRegex(ValidationError, "cannot exceed 20"):
+            AppSettings(_env_file=None, RATELIMIT_MAX_RETRIES=21)
+
+        current = AppSettings(
+            _env_file=None,
+            MEMORY_TRIM_INTERVAL=0,
+            RATELIMIT_MAX_RETRIES=0,
+            HTTP_CLIENT_TTL_DNS_CACHE=0,
+            HTTP_CACHE_STREAMS_TTL=0,
+        )
+        self.assertEqual(current.MEMORY_TRIM_INTERVAL, 0)
+        self.assertEqual(current.RATELIMIT_MAX_RETRIES, 0)

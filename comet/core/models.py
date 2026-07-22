@@ -87,6 +87,22 @@ _POSITIVE_COMETNET_OPERATION_FIELDS = (
     "COMETNET_TRANSPORT_RATE_LIMIT_COUNT",
     "COMETNET_TRANSPORT_RATE_LIMIT_WINDOW",
 )
+_NONNEGATIVE_HTTP_OPERATION_FIELDS = (
+    "MEMORY_TRIM_INTERVAL",
+    "RATELIMIT_MAX_RETRIES",
+    "HTTP_CLIENT_TTL_DNS_CACHE",
+    "HTTP_CACHE_STREAMS_TTL",
+    "HTTP_CACHE_STALE_WHILE_REVALIDATE",
+    "HTTP_CACHE_MANIFEST_TTL",
+    "HTTP_CACHE_CONFIGURE_TTL",
+)
+_POSITIVE_HTTP_OPERATION_FIELDS = (
+    "RATELIMIT_RETRY_BASE_DELAY",
+    "HTTP_CLIENT_LIMIT",
+    "HTTP_CLIENT_LIMIT_PER_HOST",
+    "HTTP_CLIENT_KEEPALIVE_TIMEOUT",
+    "HTTP_CLIENT_TIMEOUT_TOTAL",
+)
 
 
 def set_comet_foreign_keys_enabled(enabled: bool) -> None:
@@ -438,6 +454,38 @@ class AppSettings(BaseSettings):
             raise ValueError(
                 "CometNet operational values must be finite and greater than zero"
             )
+        return value
+
+    @field_validator(
+        *_NONNEGATIVE_HTTP_OPERATION_FIELDS,
+        *_POSITIVE_HTTP_OPERATION_FIELDS,
+        mode="before",
+    )
+    def reject_boolean_http_operation_values(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("HTTP operational numeric values cannot be booleans")
+        return value
+
+    @field_validator(*_NONNEGATIVE_HTTP_OPERATION_FIELDS)
+    def validate_nonnegative_http_operation_value(cls, value):
+        if value is None or not math.isfinite(value) or value < 0:
+            raise ValueError(
+                "HTTP operational values must be finite and non-negative"
+            )
+        return value
+
+    @field_validator(*_POSITIVE_HTTP_OPERATION_FIELDS)
+    def validate_positive_http_operation_value(cls, value):
+        if value is None or not math.isfinite(value) or value <= 0:
+            raise ValueError(
+                "HTTP operational values must be finite and greater than zero"
+            )
+        return value
+
+    @field_validator("RATELIMIT_MAX_RETRIES")
+    def validate_rate_limit_retry_count(cls, value):
+        if value > 20:
+            raise ValueError("RATELIMIT_MAX_RETRIES cannot exceed 20")
         return value
 
     @field_validator("EXECUTOR_MAX_WORKERS", mode="before")
