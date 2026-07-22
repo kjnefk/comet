@@ -24,6 +24,22 @@ def quick_alias_match(text_normalized: str, ez_aliases_normalized: list[str]):
     return any(alias and alias in text_normalized for alias in ez_aliases_normalized)
 
 
+def _normalize_aliases(aliases: object) -> dict[str, list[str]]:
+    if type(aliases) is not dict:
+        return {}
+
+    normalized = {}
+    for country, titles in aliases.items():
+        if type(country) is not str or not country or type(titles) is not list:
+            continue
+        current_titles = list(
+            dict.fromkeys(title for title in titles if type(title) is str and title)
+        )
+        if current_titles:
+            normalized[country] = current_titles
+    return normalized
+
+
 # Bracketed metadata (e.g. "[1999, BDRip]", "(S2)", "{HEVC}") that pollutes a
 # title segment and breaks RTN parsing.
 _BRACKET_CONTENT = re.compile(r"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}")
@@ -196,6 +212,7 @@ def filter_worker(
     torrents, title, year, year_end, media_type, aliases, remove_adult_content
 ):
     results = []
+    aliases = _normalize_aliases(aliases)
 
     tz_aliases = set()
     country_aliases = {}

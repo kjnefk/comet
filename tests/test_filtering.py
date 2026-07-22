@@ -2,7 +2,12 @@ import unittest
 
 from RTN import parse
 
-from comet.services.filtering import _clone_parsed, filter_worker, quick_alias_match
+from comet.services.filtering import (
+    _clone_parsed,
+    _normalize_aliases,
+    filter_worker,
+    quick_alias_match,
+)
 
 
 class AliasFilteringTests(unittest.TestCase):
@@ -17,6 +22,19 @@ class AliasFilteringTests(unittest.TestCase):
 
     def test_empty_alias_does_not_match_every_title(self):
         self.assertFalse(quick_alias_match("unrelated title", [""]))
+
+    def test_alias_normalization_keeps_only_current_unique_entries(self):
+        self.assertEqual(
+            _normalize_aliases(
+                {
+                    "": ["Ignored"],
+                    "en": "Ignored",
+                    "fr": [None, "", "Titre", "Titre", 1],
+                }
+            ),
+            {"fr": ["Titre"]},
+        )
+        self.assertEqual(_normalize_aliases([]), {})
 
     def test_empty_alias_cannot_bypass_worker_title_matching(self):
         torrents = [
