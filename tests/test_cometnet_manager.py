@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from comet.cometnet.manager import CometNetService
 from comet.cometnet.pools import MemberRole, PoolManifest, PoolMember
-from comet.cometnet.protocol import PoolMemberUpdate
+from comet.cometnet.protocol import PoolManifestMessage, PoolMemberUpdate
 
 
 class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
@@ -162,6 +162,41 @@ class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "database unavailable"):
             await service._handle_received_torrent(object())
+
+    async def test_remote_manifest_storage_failure_propagates(self):
+        service = CometNetService(enabled=True)
+        service.pool_store = Mock(
+            accept_remote_manifest=AsyncMock(
+                side_effect=OSError("manifest disk unavailable")
+            )
+        )
+        message = PoolManifestMessage(
+            sender_id="peer",
+            signature="signature",
+            pool_id="pool-a",
+            display_name="Pool A",
+            creator_key="creator-key",
+            members=[
+                {
+                    "public_key": "creator-key",
+                    "role": "creator",
+                    "added_at": 1,
+                    "added_by": "creator-key",
+                }
+            ],
+            created_at=1,
+            updated_at=1,
+            manifest_signatures={"creator-key": "manifest-signature"},
+        )
+
+        with (
+            patch(
+                "comet.cometnet.manager.validate_message_security",
+                new=AsyncMock(return_value=True),
+            ),
+            self.assertRaisesRegex(OSError, "manifest disk unavailable"),
+        ):
+            await service._handle_pool_manifest("peer", message)
 
     async def test_shutdown_continues_after_cleanup_failures(self):
         service = CometNetService(enabled=True)

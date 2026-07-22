@@ -84,6 +84,57 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
                 "creator-key",
             )
 
+    async def test_remote_manifest_requires_existing_pool_authority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._manifest())
+
+            valid_update = store.get_manifest("pool-a")
+            valid_update.members.append(
+                PoolMember(
+                    public_key="new-member",
+                    added_by="creator-key",
+                )
+            )
+            valid_update.version = 2
+            valid_update.updated_at += 1
+            valid_update.signatures = {"creator-key": "signature"}
+
+            with patch(
+                "comet.cometnet.pools.NodeIdentity.verify_hex_async",
+                new=AsyncMock(return_value=True),
+            ) as verify:
+                accepted, previous = await store.accept_remote_manifest(valid_update)
+
+            self.assertTrue(accepted)
+            self.assertEqual(previous.version, 1)
+            verify.assert_awaited_once()
+
+            takeover = PoolManifest(
+                pool_id="pool-a",
+                creator_key="attacker-key",
+                display_name="Taken over",
+                members=[
+                    PoolMember(
+                        public_key="attacker-key",
+                        role=MemberRole.CREATOR,
+                        added_by="attacker-key",
+                    )
+                ],
+                version=3,
+                signatures={"attacker-key": "signature"},
+            )
+            with patch(
+                "comet.cometnet.pools.NodeIdentity.verify_hex_async",
+                new=AsyncMock(return_value=True),
+            ) as verify_takeover:
+                accepted, previous = await store.accept_remote_manifest(takeover)
+
+            self.assertFalse(accepted)
+            self.assertEqual(previous.version, 2)
+            verify_takeover.assert_not_awaited()
+            self.assertEqual(store.get_manifest("pool-a").creator_key, "creator-key")
+
     async def test_manifest_model_rejects_non_current_or_inconsistent_data(self):
         valid = self._manifest().to_persisted_dict()
         malformed = []

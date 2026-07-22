@@ -957,67 +957,58 @@ class CometNetService(CometNetBackend):
                 signatures=message.manifest_signatures,
             )
 
-            # Check if we already have this pool with same or newer version
-            existing = self.pool_store.get_manifest(message.pool_id)
-            if existing and existing.version >= manifest.version:
-                # We have the same or newer version - send ours back to help the sender sync
-                if existing.version > manifest.version:
-                    try:
-                        await self._send_pool_manifest(sender_id, existing)
-                    except Exception:
-                        pass
+            accepted, existing = await self.pool_store.accept_remote_manifest(manifest)
+            if not accepted:
+                if existing and existing.version > manifest.version:
+                    await self._send_pool_manifest(sender_id, existing)
                 return
 
-            # Store the manifest (validation happens inside)
-            if await self.pool_store.validate_manifest(manifest):
-                await self.pool_store.store_manifest(manifest)
+            # Update our membership status based on the new manifest
+            my_key = self.identity.public_key_hex if self.identity else None
+            if my_key:
+                was_member = self.pool_store.is_member_of(message.pool_id)
+                is_now_member = manifest.is_member(my_key)
 
-                # Update our membership status based on the new manifest
-                my_key = self.identity.public_key_hex if self.identity else None
-                if my_key:
-                    was_member = self.pool_store.is_member_of(message.pool_id)
-                    is_now_member = manifest.is_member(my_key)
+                if was_member and not is_now_member:
+                    # We were removed from this pool - clean up completely
+                    await self.pool_store.delete_pool(message.pool_id)
 
-                    if was_member and not is_now_member:
-                        # We were removed from this pool - clean up completely
-                        await self.pool_store.delete_pool(message.pool_id)
-
+                    logger.log(
+                        "COMETNET",
+                        f"Removed from pool {message.pool_id} (kicked by admin) - pool data cleaned up",
+                    )
+                    return  # Don't store anything else for this pool
+                elif not was_member and is_now_member:
+                    # We were added to this pool (e.g., via invite on another node)
+                    await self.pool_store.add_membership(message.pool_id)
+                    logger.log(
+                        "COMETNET",
+                        f"Added to pool {message.pool_id}",
+                    )
+                elif was_member and is_now_member:
+                    # Check for role changes
+                    old_member = existing.get_member(my_key) if existing else None
+                    new_member = manifest.get_member(my_key)
+                    if (
+                        old_member
+                        and new_member
+                        and old_member.role != new_member.role
+                    ):
                         logger.log(
                             "COMETNET",
-                            f"Removed from pool {message.pool_id} (kicked by admin) - pool data cleaned up",
+                            f"Role updated in pool {message.pool_id}: {old_member.role} -> {new_member.role}",
                         )
-                        return  # Don't store anything else for this pool
-                    elif not was_member and is_now_member:
-                        # We were added to this pool (e.g., via invite on another node)
-                        await self.pool_store.add_membership(message.pool_id)
-                        logger.log(
-                            "COMETNET",
-                            f"Added to pool {message.pool_id}",
-                        )
-                    elif was_member and is_now_member:
-                        # Check for role changes
-                        old_member = existing.get_member(my_key) if existing else None
-                        new_member = manifest.get_member(my_key)
-                        if (
-                            old_member
-                            and new_member
-                            and old_member.role != new_member.role
-                        ):
-                            logger.log(
-                                "COMETNET",
-                                f"Role updated in pool {message.pool_id}: {old_member.role} -> {new_member.role}",
-                            )
 
-                # Store the sender's address so we can reconnect later
-                sender_addr = self.transport.get_peer_address(sender_id)
-                if sender_addr:
-                    await self.pool_store.add_pool_peer(message.pool_id, sender_addr)
+            # Store the sender's address so we can reconnect later
+            sender_addr = self.transport.get_peer_address(sender_id)
+            if sender_addr:
+                await self.pool_store.add_pool_peer(message.pool_id, sender_addr)
 
-                logger.log(
-                    "COMETNET",
-                    f"Received pool manifest: {message.display_name} ({message.pool_id}) v{message.manifest_version}",
-                )
-        except Exception as e:
+            logger.log(
+                "COMETNET",
+                f"Received pool manifest: {message.display_name} ({message.pool_id}) v{message.manifest_version}",
+            )
+        except ValueError as e:
             logger.debug(f"Failed to process pool manifest: {e}")
 
     async def _handle_pool_join_request(

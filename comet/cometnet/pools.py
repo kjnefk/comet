@@ -528,6 +528,20 @@ class PoolStore:
         self._manifests[manifest.pool_id] = persisted_manifest
         return True
 
+    async def accept_remote_manifest(
+        self,
+        manifest: PoolManifest,
+    ) -> tuple[bool, Optional[PoolManifest]]:
+        """Validate and serialize publication of a newer remote manifest."""
+        async with self._mutation_lock:
+            current = self.get_manifest(manifest.pool_id)
+            if current and manifest.version <= current.version:
+                return False, current
+            if not await self.validate_manifest(manifest, current):
+                return False, current
+            await self.store_manifest(manifest)
+            return True, current
+
     async def create_pool(
         self,
         pool_id: str,
@@ -1296,7 +1310,11 @@ class PoolStore:
 
     # ==================== Validation ====================
 
-    async def validate_manifest(self, manifest: PoolManifest) -> bool:
+    async def validate_manifest(
+        self,
+        manifest: PoolManifest,
+        trusted_manifest: Optional[PoolManifest] = None,
+    ) -> bool:
         """
         Validate a pool manifest.
 
@@ -1308,17 +1326,18 @@ class PoolStore:
         Returns:
             True if the manifest is valid
         """
-        # Must have at least one admin
-        admins = manifest.get_admins()
-        if not admins:
+        signature_authority = trusted_manifest or manifest
+        if trusted_manifest and (
+            manifest.creator_key != trusted_manifest.creator_key
+            or manifest.created_at != trusted_manifest.created_at
+        ):
             return False
 
-        # Creator must have admin privileges (CREATOR or ADMIN role)
         try:
             signable_data = manifest.to_signable_bytes()
 
             for admin_key, signature in manifest.signatures.items():
-                if manifest.is_admin(admin_key):
+                if signature_authority.is_admin(admin_key):
                     if await NodeIdentity.verify_hex_async(
                         signable_data, signature, admin_key
                     ):
