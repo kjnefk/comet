@@ -1,7 +1,13 @@
 import unittest
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from unittest.mock import patch
 
-from comet.services.indexer_manager import IndexerManager
+from comet.services.indexer_manager import (
+    IndexerManager,
+    _active_jackett_ids,
+    _active_prowlarr_ids,
+)
 
 
 class _ResponseContext:
@@ -35,6 +41,40 @@ class _Session:
 
 
 class IndexerManagerTests(unittest.IsolatedAsyncioTestCase):
+    def test_jackett_active_ids_isolate_malformed_entries(self):
+        root = ET.fromstring(
+            """
+            <indexers>
+                <indexer><title>missing id</title></indexer>
+                <indexer id="empty-title"><title /></indexer>
+                <indexer id="wanted"><title>Wanted Name</title></indexer>
+            </indexers>
+            """
+        )
+
+        self.assertEqual(_active_jackett_ids(root, ["wanted name"]), ["wanted"])
+
+    def test_prowlarr_active_ids_reject_invalid_health_without_losing_siblings(self):
+        now = datetime(2026, 7, 22, tzinfo=timezone.utc)
+        indexers = [
+            None,
+            {"id": None, "enable": True, "protocol": "torrent"},
+            {"id": 1, "enable": True, "protocol": "torrent", "name": "Healthy"},
+            {"id": 2, "enable": True, "protocol": "torrent", "name": "Disabled"},
+            {"id": 3, "enable": True, "protocol": "torrent", "name": "Bad Date"},
+            {"id": 4, "enable": True, "protocol": "torrent", "name": "Later"},
+        ]
+        statuses = [
+            None,
+            {"indexerId": 2, "disabledTill": "2026-07-23T00:00:00Z"},
+            {"indexerId": 3, "disabledTill": "not-a-date"},
+        ]
+
+        self.assertEqual(
+            _active_prowlarr_ids(indexers, statuses, [], now),
+            ["1", "4"],
+        )
+
     async def test_prowlarr_response_closes_without_reading_error_body(self):
         response = _ResponseContext(503)
         manager = IndexerManager()

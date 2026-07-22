@@ -10,6 +10,82 @@ from comet.core.logger import logger
 from comet.core.models import settings
 
 
+def _active_jackett_ids(root, configured_ids: list[str]) -> list[str]:
+    configured = {value.lower() for value in configured_ids}
+    active_ids = []
+    for indexer in root.findall("indexer"):
+        indexer_id = indexer.get("id")
+        if not isinstance(indexer_id, str) or not indexer_id:
+            continue
+        if configured:
+            title = indexer.find("title")
+            name = (
+                title.text if title is not None and isinstance(title.text, str) else ""
+            )
+            if indexer_id.lower() not in configured and name.lower() not in configured:
+                continue
+        active_ids.append(indexer_id)
+    return active_ids
+
+
+def _active_prowlarr_ids(
+    indexers, statuses, configured_ids: list[str], current_time: datetime
+) -> list[str]:
+    if not isinstance(indexers, list) or not isinstance(statuses, list):
+        return []
+
+    status_map = {
+        status["indexerId"]: status
+        for status in statuses
+        if isinstance(status, dict)
+        and isinstance(status.get("indexerId"), int)
+        and not isinstance(status["indexerId"], bool)
+    }
+    configured = {value.lower() for value in configured_ids}
+    active_ids = []
+    for indexer in indexers:
+        if not isinstance(indexer, dict):
+            continue
+        indexer_id = indexer.get("id")
+        if (
+            indexer.get("enable") is not True
+            or indexer.get("protocol") != "torrent"
+            or not isinstance(indexer_id, int)
+            or isinstance(indexer_id, bool)
+            or indexer_id <= 0
+        ):
+            continue
+
+        status = status_map.get(indexer_id)
+        if status is not None:
+            disabled_till = status.get("disabledTill")
+            if disabled_till is not None:
+                if not isinstance(disabled_till, str):
+                    continue
+                try:
+                    disabled_until = datetime.fromisoformat(
+                        disabled_till.replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    continue
+                if disabled_until.tzinfo is None or disabled_until > current_time:
+                    continue
+
+        indexer_id_text = str(indexer_id)
+        if configured:
+            name = indexer.get("name")
+            definition_name = indexer.get("definitionName")
+            candidates = {
+                indexer_id_text.lower(),
+                name.lower() if isinstance(name, str) else "",
+                definition_name.lower() if isinstance(definition_name, str) else "",
+            }
+            if configured.isdisjoint(candidates):
+                continue
+        active_ids.append(indexer_id_text)
+    return active_ids
+
+
 class IndexerManager:
     def __init__(self):
         self.session: Optional[aiohttp.ClientSession] = None
@@ -67,25 +143,7 @@ class IndexerManager:
 
                     content = await response.text()
                     root = ET.fromstring(content)
-                    active_ids = []
-
-                    for indexer in root.findall("indexer"):
-                        indexer_id = indexer.get("id")
-                        if not indexer_id:
-                            continue
-                        active_ids.append(indexer_id)
-
-                    # Filter if original config exists
-                    if self.original_jackett_config:
-                        config_set = {x.lower() for x in self.original_jackett_config}
-                        filtered_ids = []
-                        for indexer in root.findall("indexer"):
-                            pid = indexer.get("id")
-                            title = indexer.find("title")
-                            name = title.text if title is not None else ""
-                            if pid.lower() in config_set or name.lower() in config_set:
-                                filtered_ids.append(pid)
-                        active_ids = filtered_ids
+                    active_ids = _active_jackett_ids(root, self.original_jackett_config)
 
                     if sorted(settings.JACKETT_INDEXERS) != sorted(active_ids):
                         settings.JACKETT_INDEXERS = active_ids
@@ -133,53 +191,13 @@ class IndexerManager:
                     )
                     return
 
-                status_map = {s["indexerId"]: s for s in statuses}
-                active_ids = []
                 current_time = datetime.now(timezone.utc)
-
-                for indexer in indexers:
-                    if not indexer.get("enable"):
-                        continue
-
-                    if indexer.get("protocol") != "torrent":
-                        continue
-
-                    idx_id = indexer.get("id")
-
-                    # Check health
-                    status = status_map.get(idx_id, {})
-                    disabled_till = status.get("disabledTill")
-                    if disabled_till:
-                        try:
-                            dt = datetime.fromisoformat(
-                                disabled_till.replace("Z", "+00:00")
-                            )
-                            if dt > current_time:
-                                continue
-                        except ValueError:
-                            pass  # Ignore parsing error, assume enabled
-
-                    active_ids.append(str(idx_id))
-
-                # Apply original config filter configuration
-                if self.original_prowlarr_config:
-                    config_set = {x.lower() for x in self.original_prowlarr_config}
-                    filtered_ids = []
-                    for indexer in indexers:
-                        idx_id_str = str(indexer.get("id"))
-                        if idx_id_str not in active_ids:
-                            continue
-
-                        name = indexer.get("name", "").lower()
-                        def_name = indexer.get("definitionName", "").lower()
-
-                        if (
-                            name in config_set
-                            or def_name in config_set
-                            or idx_id_str in config_set  # support ID in config too
-                        ):
-                            filtered_ids.append(idx_id_str)
-                    active_ids = filtered_ids
+                active_ids = _active_prowlarr_ids(
+                    indexers,
+                    statuses,
+                    self.original_prowlarr_config,
+                    current_time,
+                )
 
                 if sorted(settings.PROWLARR_INDEXERS) != sorted(active_ids):
                     settings.PROWLARR_INDEXERS = active_ids
@@ -188,6 +206,7 @@ class IndexerManager:
                     id_to_name = {
                         str(i.get("id")): i.get("name", str(i.get("id")))
                         for i in indexers
+                        if isinstance(i, dict)
                     }
                     active_names = [
                         id_to_name.get(idx_id, idx_id) for idx_id in active_ids
