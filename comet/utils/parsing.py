@@ -200,35 +200,30 @@ def url_mode_matches_context(mode: str, context: str):
 
 
 def associate_urls_credentials(urls, credentials):
-    if not urls:
+    if urls is None or urls == []:
         return []
-
-    if isinstance(urls, str):
-        urls = [urls]
-
-    if len(urls) == 1:
-        if credentials is None:
-            credential = None
-        elif isinstance(credentials, str):
-            credential = credentials or None
-        elif isinstance(credentials, list) and len(credentials) > 0:
-            credential = credentials[0]
-        else:
-            credential = None
-
-        credentials_list = [credential]
+    if type(urls) is str:
+        if not urls:
+            raise ValueError("scraper URL must be non-empty")
+        url_list = [urls]
+    elif type(urls) is list:
+        if any(type(url) is not str or not url for url in urls):
+            raise ValueError("scraper URLs must be non-empty strings")
+        url_list = urls
     else:
-        if credentials is None:
-            credentials_list = [None] * len(urls)
-        elif isinstance(credentials, str):
-            credentials_list = [credentials or None] * len(urls)
-        elif isinstance(credentials, list):
-            credentials_list = []
-            for i in range(len(urls)):
-                if i < len(credentials):
-                    cred = credentials[i] or None
-                    credentials_list.append(cred)
-                else:
-                    credentials_list.append(None)
+        raise TypeError("scraper URLs must be a string, list, or None")
 
-    return list(zip(urls, credentials_list))
+    if credentials is None:
+        credentials_list = [None] * len(url_list)
+    elif type(credentials) is str:
+        credentials_list = [credentials or None] * len(url_list)
+    elif type(credentials) is list:
+        if len(credentials) != len(url_list):
+            raise ValueError("credential list must match the scraper URL list length")
+        if any(type(credential) is not str for credential in credentials):
+            raise TypeError("scraper credentials must be strings")
+        credentials_list = [credential or None for credential in credentials]
+    else:
+        raise TypeError("scraper credentials must be a string, list, or None")
+
+    return list(zip(url_list, credentials_list))

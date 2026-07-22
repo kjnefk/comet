@@ -4,9 +4,33 @@ from unittest.mock import patch
 from comet.core.models import settings
 from comet.scrapers.helpers.aiostreams import AIOStreamsConfig
 from comet.scrapers.helpers.mediafusion import MediaFusionConfig
+from comet.utils.parsing import associate_urls_credentials
 
 
 class ScraperHelperConfigTests(unittest.TestCase):
+    def test_url_credentials_follow_the_single_current_schema(self):
+        self.assertEqual(associate_urls_credentials(None, None), [])
+        self.assertEqual(associate_urls_credentials([], None), [])
+        self.assertEqual(
+            associate_urls_credentials(["one", "two"], "shared"),
+            [("one", "shared"), ("two", "shared")],
+        )
+        self.assertEqual(
+            associate_urls_credentials(["one", "two"], ["first", ""]),
+            [("one", "first"), ("two", None)],
+        )
+
+    def test_url_credentials_reject_invalid_roots_and_misalignment(self):
+        for urls in ("", (), False, 1, ["one", ""], ["one", None]):
+            with self.subTest(urls=urls), self.assertRaises((TypeError, ValueError)):
+                associate_urls_credentials(urls, None)
+        for credentials in ((), False, 1, ["only-one"], ["first", None]):
+            with (
+                self.subTest(credentials=credentials),
+                self.assertRaises((TypeError, ValueError)),
+            ):
+                associate_urls_credentials(["one", "two"], credentials)
+
     def test_aiostreams_headers_are_isolated_and_refresh_atomically(self):
         with (
             patch.object(settings, "AIOSTREAMS_URL", ["https://one"]),
