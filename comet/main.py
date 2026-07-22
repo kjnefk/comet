@@ -1,6 +1,4 @@
 import os
-import traceback
-
 import uvicorn
 
 from comet.api.app import app
@@ -26,9 +24,9 @@ def run_with_uvicorn():
         server.run()
     except KeyboardInterrupt:
         logger.log("COMET", "Server stopped by user")
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        logger.exception(traceback.format_exc())
+    except Exception as error:
+        logger.exception(f"Unexpected server error: {error}")
+        raise
     finally:
         logger.log("COMET", "Server Shutdown")
 
