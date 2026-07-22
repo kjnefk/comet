@@ -29,6 +29,7 @@ from comet.cometnet.protocol import (AnyMessage, HandshakeMessage, MessageType,
 from comet.cometnet.utils import (extract_ip_from_address,
                                   get_websocket_compression,
                                   is_valid_peer_address)
+from comet.cometnet.validation import validate_message_security
 from comet.core.logger import logger
 from comet.core.models import settings
 from comet.utils.network import extract_ip_from_headers
@@ -841,8 +842,16 @@ class ConnectionManager:
 
                     # Handle ping/pong internally
                     if isinstance(message, PingMessage):
+                        if not await validate_message_security(
+                            message, conn.node_id, self._keystore, None
+                        ):
+                            continue
                         await self._handle_ping(conn, message)
                     elif isinstance(message, PongMessage):
+                        if not await validate_message_security(
+                            message, conn.node_id, self._keystore, None
+                        ):
+                            continue
                         self._handle_pong(conn, message)
                     else:
                         # Route to registered handler

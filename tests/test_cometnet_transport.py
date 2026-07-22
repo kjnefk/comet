@@ -3,7 +3,7 @@ import time
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from comet.cometnet.protocol import HandshakeMessage
+from comet.cometnet.protocol import HandshakeMessage, PingMessage
 from comet.cometnet.transport import ConnectionManager, NodeIdentity, PeerConnection
 
 
@@ -36,6 +36,39 @@ class _Peer:
 
 
 class CometNetTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_receive_loop_rejects_unauthenticated_control_message(self):
+        manager = ConnectionManager(_Identity())
+        manager._running = True
+        ping = PingMessage(sender_id="peer", nonce="nonce", signature="00")
+
+        class WebSocket:
+            calls = 0
+
+            async def recv(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return ping.to_bytes()
+                raise RuntimeError("stop receive loop")
+
+        connection = PeerConnection(
+            node_id="peer",
+            address="ws://peer",
+            websocket=WebSocket(),
+        )
+        manager._connections["peer"] = connection
+
+        with (
+            patch(
+                "comet.cometnet.transport.validate_message_security",
+                new=AsyncMock(return_value=False),
+            ) as validate,
+            patch.object(manager, "_handle_ping", new=AsyncMock()) as handle_ping,
+        ):
+            await manager._receive_loop(connection)
+
+        validate.assert_awaited_once_with(ping, "peer", None, None)
+        handle_ping.assert_not_awaited()
+
     async def test_duplicate_inbound_handshake_releases_reserved_ip_slot(self):
         manager = ConnectionManager(_Identity())
         manager._connections["peer"] = object()
