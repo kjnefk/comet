@@ -28,6 +28,7 @@ from comet.cometnet.crypto import NodeIdentity
 from comet.cometnet.utils import canonicalize_data, run_in_executor
 from comet.core.logger import logger
 from comet.core.models import settings
+from comet.utils.atomic_file import write_text_atomic
 
 
 class MemberRole(str, Enum):
@@ -346,8 +347,9 @@ class PoolStore:
         # Persist to disk
         manifest_path = self.manifests_dir / f"{manifest.pool_id}.json"
         try:
-            async with aiofiles.open(manifest_path, "w") as f:
-                await f.write(json.dumps(manifest.model_dump(), indent=2))
+            await write_text_atomic(
+                manifest_path, json.dumps(manifest.model_dump(), indent=2)
+            )
             return True
         except Exception as e:
             logger.warning(f"Failed to save pool manifest {manifest.pool_id}: {e}")
@@ -844,8 +846,9 @@ class PoolStore:
         """Save memberships to disk."""
         memberships_file = self.pools_dir / "memberships.json"
         try:
-            async with aiofiles.open(memberships_file, "w") as f:
-                await f.write(json.dumps(list(self._memberships)))
+            await write_text_atomic(
+                memberships_file, json.dumps(sorted(self._memberships))
+            )
         except Exception as e:
             logger.warning(f"Failed to save memberships: {e}")
 
@@ -871,8 +874,9 @@ class PoolStore:
         """Save subscriptions to disk."""
         subscriptions_file = self.pools_dir / "subscriptions.json"
         try:
-            async with aiofiles.open(subscriptions_file, "w") as f:
-                await f.write(json.dumps(list(self._subscriptions)))
+            await write_text_atomic(
+                subscriptions_file, json.dumps(sorted(self._subscriptions))
+            )
         except Exception as e:
             logger.warning(f"Failed to save subscriptions: {e}")
 
@@ -909,8 +913,9 @@ class PoolStore:
 
         invite_file = pool_inv_dir / f"{invite.invite_code}.json"
         try:
-            async with aiofiles.open(invite_file, "w") as f:
-                await f.write(json.dumps(invite.model_dump(), indent=2))
+            await write_text_atomic(
+                invite_file, json.dumps(invite.model_dump(), indent=2)
+            )
         except Exception as e:
             logger.warning(f"Failed to save invite: {e}")
 
@@ -935,9 +940,10 @@ class PoolStore:
         peers_file = self.pools_dir / "pool_peers.json"
         try:
             # Convert sets to lists for JSON serialization
-            data = {pid: list(peers) for pid, peers in self._pool_peers.items()}
-            async with aiofiles.open(peers_file, "w") as f:
-                await f.write(json.dumps(data, indent=2))
+            data = {
+                pid: sorted(peers) for pid, peers in sorted(self._pool_peers.items())
+            }
+            await write_text_atomic(peers_file, json.dumps(data, indent=2))
         except Exception as e:
             logger.warning(f"Failed to save pool peers: {e}")
 
@@ -1020,8 +1026,9 @@ class PoolStore:
         """Save a manifest to disk (without re-signing)."""
         manifest_path = self.manifests_dir / f"{manifest.pool_id}.json"
         try:
-            async with aiofiles.open(manifest_path, "w") as f:
-                await f.write(json.dumps(manifest.model_dump(), indent=2))
+            await write_text_atomic(
+                manifest_path, json.dumps(manifest.model_dump(), indent=2)
+            )
             return True
         except Exception as e:
             logger.warning(f"Failed to save pool manifest {manifest.pool_id}: {e}")

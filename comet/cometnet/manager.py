@@ -40,6 +40,7 @@ from comet.cometnet.utils import (check_advertise_url_reachability,
 from comet.cometnet.validation import validate_message_security
 from comet.core.logger import logger
 from comet.core.models import settings
+from comet.utils.atomic_file import write_text_atomic
 from comet.utils.network import get_client_ip_any
 
 
@@ -2087,8 +2088,7 @@ class CometNetService(CometNetBackend):
 
             self.keys_dir.mkdir(parents=True, exist_ok=True)
 
-            async with aiofiles.open(state_path, "w") as f:
-                await f.write(json.dumps(state, indent=2))
+            await write_text_atomic(state_path, json.dumps(state, indent=2))
         except Exception as e:
             logger.warning(f"Failed to save CometNet state: {e}")
 
