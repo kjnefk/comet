@@ -60,6 +60,11 @@ _UPSERT_SERIES_INDEX_REFRESH_QUERY = """
         refreshed_at = EXCLUDED.refreshed_at
 """
 
+_DELETE_SERIES_EPISODE_INDEX_QUERY = """
+    DELETE FROM series_episode_index
+    WHERE series_id = :series_id
+"""
+
 
 def _normalize_air_date(raw_value) -> str | None:
     if not isinstance(raw_value, str) or not raw_value:
@@ -111,6 +116,12 @@ class EpisodeIndexService:
             return
         await database.execute_many(_UPSERT_SERIES_EPISODE_INDEX_QUERY, rows)
 
+    async def _delete_series_air_dates(self, series_id: str) -> None:
+        await database.execute(
+            _DELETE_SERIES_EPISODE_INDEX_QUERY,
+            {"series_id": series_id},
+        )
+
     async def _upsert_series_refresh(self, series_id: str, refreshed_at: float) -> None:
         await database.execute(
             _UPSERT_SERIES_INDEX_REFRESH_QUERY,
@@ -124,6 +135,7 @@ class EpisodeIndexService:
         rows: list[dict],
     ) -> None:
         async with database.transaction():
+            await self._delete_series_air_dates(series_id)
             await self._upsert_series_air_dates(rows)
             await self._upsert_series_refresh(series_id, refreshed_at)
 
