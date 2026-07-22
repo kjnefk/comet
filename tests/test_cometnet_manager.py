@@ -71,6 +71,86 @@ class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
                     service.transport.broadcast.assert_not_awaited()
                     send_manifest.assert_awaited_once()
 
+    async def test_self_leave_is_persisted_only_as_admin_signed_state(self):
+        for local_role, accepted in [
+            (MemberRole.CREATOR, True),
+            (MemberRole.MEMBER, False),
+        ]:
+            with self.subTest(local_role=local_role):
+                manifest = self._pool_manifest()
+                manifest.members.extend(
+                    [
+                        PoolMember(
+                            public_key="leaving-key",
+                            role=MemberRole.MEMBER,
+                            added_by="creator-key",
+                        ),
+                        PoolMember(
+                            public_key="local-key",
+                            role=local_role,
+                            added_by="creator-key",
+                        ),
+                    ]
+                )
+                if local_role is MemberRole.CREATOR:
+                    manifest.members[0].role = MemberRole.ADMIN
+                    manifest.creator_key = "local-key"
+
+                async def store_manifest(updated, identity):
+                    self.assertEqual(identity.public_key_hex, "local-key")
+                    updated.signatures["local-key"] = "new-state-signature"
+
+                service = CometNetService(enabled=True)
+                service.identity = Mock(
+                    public_key_hex="local-key",
+                    node_id="local-node",
+                )
+                service.pool_store = Mock(
+                    get_manifest=Mock(return_value=manifest),
+                    store_manifest=AsyncMock(side_effect=store_manifest),
+                )
+                message = PoolMemberUpdate(
+                    sender_id="leaving-node",
+                    signature="leave-signature",
+                    pool_id="pool-a",
+                    action="leave",
+                    member_key="leaving-key",
+                    updated_by="leaving-key",
+                )
+
+                with (
+                    patch(
+                        "comet.cometnet.manager.validate_message_security",
+                        new=AsyncMock(return_value=True),
+                    ),
+                    patch(
+                        "comet.cometnet.manager.NodeIdentity.verify_hex_async",
+                        new=AsyncMock(return_value=True),
+                    ),
+                    patch.object(
+                        service,
+                        "_broadcast_pool_member_update",
+                        new=AsyncMock(),
+                    ) as broadcast_update,
+                ):
+                    await service._handle_pool_member_update("leaving-node", message)
+
+                if accepted:
+                    service.pool_store.store_manifest.assert_awaited_once()
+                    broadcast_update.assert_awaited_once_with(
+                        pool_id="pool-a",
+                        action="remove",
+                        member_key="leaving-key",
+                        updated_by="local-key",
+                        manifest_signatures={
+                            "local-key": "new-state-signature"
+                        },
+                        exclude={"leaving-node"},
+                    )
+                else:
+                    service.pool_store.store_manifest.assert_not_awaited()
+                    broadcast_update.assert_not_awaited()
+
     async def test_received_torrent_save_failure_propagates_to_gossip(self):
         service = CometNetService(enabled=True)
 

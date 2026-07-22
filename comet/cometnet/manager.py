@@ -1113,6 +1113,13 @@ class CometNetService(CometNetBackend):
             # Verify the person is actually a member
             if not manifest.is_member(message.member_key):
                 return
+
+            # A member's leave signature proves intent, but only an administrator
+            # can certify and publish the resulting manifest state.
+            if not self.identity or not current_manifest.is_admin(
+                self.identity.public_key_hex
+            ):
+                return
         else:
             # Normal case: admin-initiated update
             # Verify the updater is an admin
@@ -1165,18 +1172,23 @@ class CometNetService(CometNetBackend):
         manifest.version += 1
         manifest.updated_at = message.timestamp
 
-        # For "leave" action, we don't require manifest signatures
-        # The message signature from the leaving member is sufficient
+        # Convert the member's signed intent into a newly signed administrator
+        # state update. Persisting the old manifest signatures here would attach
+        # invalid signatures to the changed member list.
         if is_self_leave:
-            # Just store the updated manifest (no signature verification needed)
-            # The message signature was already verified
-            await self.pool_store.store_manifest(manifest)
+            await self.pool_store.store_manifest(manifest, self.identity)
             logger.log(
                 "COMETNET",
                 f"Member {NodeIdentity.node_id_from_public_key(message.member_key)[:8]} left pool {message.pool_id}",
             )
-            # Re-broadcast to others
-            await self.transport.broadcast(message, exclude={sender_id})
+            await self._broadcast_pool_member_update(
+                pool_id=message.pool_id,
+                action="remove",
+                member_key=message.member_key,
+                updated_by=self.identity.public_key_hex,
+                manifest_signatures=manifest.signatures,
+                exclude={sender_id},
+            )
             return
 
         # Verify that our new state matches the signatures provided by admin
