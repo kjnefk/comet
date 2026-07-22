@@ -628,6 +628,24 @@ class PoolStore:
         role: MemberRole = MemberRole.MEMBER,
         alias: Optional[str] = None,
     ) -> bool:
+        """Serialize an administrator member addition."""
+        async with self._mutation_lock:
+            return await self._add_member(
+                pool_id,
+                new_member_key,
+                identity,
+                role,
+                alias,
+            )
+
+    async def _add_member(
+        self,
+        pool_id: str,
+        new_member_key: str,
+        identity,
+        role: MemberRole,
+        alias: Optional[str],
+    ) -> bool:
         """
         Add a new member to a pool (admin action).
 
@@ -678,6 +696,16 @@ class PoolStore:
         member_key: str,
         identity,  # NodeIdentity (must be admin)
     ) -> bool:
+        """Serialize an administrator member removal."""
+        async with self._mutation_lock:
+            return await self._remove_member(pool_id, member_key, identity)
+
+    async def _remove_member(
+        self,
+        pool_id: str,
+        member_key: str,
+        identity,
+    ) -> bool:
         """Remove a member from a pool (admin action)."""
         manifest = self.get_manifest(pool_id)
         if not manifest:
@@ -710,6 +738,38 @@ class PoolStore:
             "COMETNET", f"Removed member {member.node_id[:8]} from pool {pool_id}"
         )
         return True
+
+    async def set_member_role(
+        self,
+        pool_id: str,
+        member_key: str,
+        role: MemberRole,
+        identity,
+    ) -> bool:
+        """Serialize an administrator role change."""
+        if role not in (MemberRole.ADMIN, MemberRole.MEMBER):
+            raise ValueError("Member role must be admin or member")
+
+        async with self._mutation_lock:
+            manifest = self.get_manifest(pool_id)
+            if not manifest:
+                raise ValueError(f"Pool {pool_id} not found")
+            if not manifest.is_admin(identity.public_key_hex):
+                raise PermissionError("Only admins can change member roles")
+
+            member = manifest.get_member(member_key)
+            if not member:
+                raise ValueError("Member not found in pool")
+            if member.role == MemberRole.CREATOR:
+                raise ValueError("Cannot change the role of the pool creator")
+            if member.role == role:
+                return False
+
+            member.role = role
+            manifest.version += 1
+            manifest.updated_at = time.time()
+            await self.store_manifest(manifest, identity)
+            return True
 
     async def leave_pool(
         self,
@@ -754,35 +814,6 @@ class PoolStore:
         del self._manifests[pool_id]
 
         logger.log("COMETNET", f"Left pool {pool_id}")
-        return True
-
-    async def promote_member(
-        self,
-        pool_id: str,
-        member_key: str,
-        identity,  # NodeIdentity (must be admin)
-    ) -> bool:
-        """Promote a member to admin."""
-        manifest = self.get_manifest(pool_id)
-        if not manifest:
-            raise ValueError(f"Pool {pool_id} not found")
-
-        if not manifest.is_admin(identity.public_key_hex):
-            raise PermissionError("Only admins can promote members")
-
-        member = manifest.get_member(member_key)
-        if not member or member.role in (MemberRole.ADMIN, MemberRole.CREATOR):
-            return False  # Already admin/creator or not found
-
-        member.role = MemberRole.ADMIN
-        manifest.version += 1
-        manifest.updated_at = time.time()
-
-        await self.store_manifest(manifest, identity)
-
-        logger.log(
-            "COMETNET", f"Promoted {member.node_id[:8]} to admin in pool {pool_id}"
-        )
         return True
 
     # ==================== Subscription Operations ====================

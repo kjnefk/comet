@@ -1859,47 +1859,28 @@ class CometNetService(CometNetBackend):
         if not self.pool_store:
             return False
 
-        manifest = self.pool_store.get_manifest(pool_id)
-        if not manifest:
-            raise ValueError(f"Pool {pool_id} not found")
-
-        if not manifest.is_admin(self.identity.public_key_hex):
-            raise PermissionError("Only admins can change member roles")
-
-        member = manifest.get_member(member_key)
-        if not member:
-            raise ValueError("Member not found in pool")
-
         # Validate new role
         try:
             role = MemberRole(new_role)
         except ValueError:
             raise ValueError(f"Invalid role: {new_role}. Must be 'admin' or 'member'")
 
-        # Can't demote or modify the creator
-        if member.role == MemberRole.CREATOR:
-            raise ValueError("Cannot change the role of the pool creator")
-
-        # Can't demote the last admin
-        if member.role == MemberRole.ADMIN and role == MemberRole.MEMBER:
-            admin_count = len(manifest.get_admins())
-            if admin_count <= 1:
-                raise ValueError("Cannot demote the last admin")
-
-        # Update the role
-        member.role = role
-        manifest.version += 1
-        manifest.updated_at = time.time()
-
-        # Re-sign and save
-        await self.pool_store.store_manifest(manifest, self.identity)
+        changed = await self.pool_store.set_member_role(
+            pool_id,
+            member_key,
+            role,
+            self.identity,
+        )
+        if not changed:
+            return False
 
         # Broadcast updated manifest to all peers
+        manifest = self.pool_store.get_manifest(pool_id)
         await self._broadcast_pool_manifest(manifest)
 
         logger.log(
             "COMETNET",
-            f"Changed role of {member.node_id[:8]} to {new_role} in pool {pool_id}",
+            f"Changed role of {NodeIdentity.node_id_from_public_key(member_key)[:8]} to {new_role} in pool {pool_id}",
         )
         return True
 

@@ -13,6 +13,7 @@ from comet.cometnet.pools import (
     PoolMember,
     PoolStore,
 )
+from comet.utils.atomic_file import write_text_atomic
 
 
 class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
@@ -333,6 +334,45 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
                 member.public_key for member in store.get_manifest("pool-a").members
             }
             self.assertEqual(len(member_keys & {"member-a", "member-b"}), 1)
+
+    async def test_concurrent_admin_additions_do_not_lose_members(self):
+        class Identity:
+            public_key_hex = "creator-key"
+
+            async def sign_hex_async(self, payload):
+                del payload
+                return "signature"
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._manifest())
+            active_writes = 0
+            peak_writes = 0
+
+            async def slow_write(path, content):
+                nonlocal active_writes, peak_writes
+                active_writes += 1
+                peak_writes = max(peak_writes, active_writes)
+                try:
+                    await asyncio.sleep(0.01)
+                    await write_text_atomic(path, content)
+                finally:
+                    active_writes -= 1
+
+            with patch("comet.cometnet.pools.write_text_atomic", new=slow_write):
+                results = await asyncio.gather(
+                    store.add_member("pool-a", "member-a", Identity()),
+                    store.add_member("pool-a", "member-b", Identity()),
+                )
+
+            manifest = store.get_manifest("pool-a")
+            self.assertEqual(results, [True, True])
+            self.assertEqual(peak_writes, 1)
+            self.assertEqual(manifest.version, 3)
+            self.assertEqual(
+                {member.public_key for member in manifest.members},
+                {"creator-key", "member-a", "member-b"},
+            )
 
     async def test_invite_limits_reject_boolean_zero_and_non_finite_values(self):
         class Identity:
