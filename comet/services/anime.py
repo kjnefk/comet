@@ -111,7 +111,11 @@ class AnimeMapper:
         if not row:
             return None
 
-        return orjson.loads(row["data_json"])
+        try:
+            data = orjson.loads(row["data_json"])
+        except (TypeError, orjson.JSONDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
 
     async def get_aliases(self, media_id: str):
         if not self.loaded:
@@ -122,17 +126,25 @@ class AnimeMapper:
             return {}
 
         title = data.get("title")
-        synonyms = data.get("synonyms")
+        if not isinstance(title, str) or not title:
+            title = None
+        raw_synonyms = data.get("synonyms")
+        synonyms = (
+            [value for value in raw_synonyms if isinstance(value, str) and value]
+            if isinstance(raw_synonyms, list)
+            else []
+        )
 
         if not title and not synonyms:
             return {}
 
-        if title and synonyms:
-            return {"ez": [title, *synonyms]}
-        elif title:
-            return {"ez": [title]}
-        else:
-            return {"ez": list(synonyms)}
+        aliases = []
+        seen = set()
+        for value in ([title] if title else []) + synonyms:
+            if value not in seen:
+                seen.add(value)
+                aliases.append(value)
+        return {"ez": aliases}
 
     async def get_imdb_from_kitsu(self, kitsu_id: str | int):
         if not self.loaded:
@@ -224,8 +236,9 @@ class AnimeMapper:
         if media_id.startswith("tt"):
             return "imdb", media_id.split(":")[0]
 
-        if media_id.startswith("kitsu"):
-            return "kitsu", media_id.split(":")[1]
+        if media_id.startswith("kitsu:"):
+            provider_id = media_id.partition(":")[2]
+            return ("kitsu", provider_id) if provider_id else (None, None)
 
         provider, sep, provider_id = media_id.partition(":")
 
