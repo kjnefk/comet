@@ -1,10 +1,12 @@
 import asyncio
+import tempfile
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from comet.cometnet.manager import CometNetService
-from comet.cometnet.pools import MemberRole, PoolManifest, PoolMember
+from comet.cometnet.pools import MemberRole, PoolManifest, PoolMember, PoolStore
 from comet.cometnet.protocol import PoolManifestMessage, PoolMemberUpdate
+from comet.utils.atomic_file import write_text_atomic
 
 
 class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
@@ -44,10 +46,6 @@ class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
 
                 with (
                     patch(
-                        "comet.cometnet.manager.validate_message_security",
-                        new=AsyncMock(return_value=True),
-                    ),
-                    patch(
                         "comet.cometnet.manager.NodeIdentity.verify_hex_async",
                         new=AsyncMock(return_value=True),
                     ) as verify_delta,
@@ -59,7 +57,7 @@ class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
                         service, "_send_pool_manifest", new=AsyncMock()
                     ) as send_manifest,
                 ):
-                    await service._handle_pool_member_update("relay-node", message)
+                    await service._apply_pool_member_update("relay-node", message)
 
                 verify_delta.assert_awaited_once()
                 if accepted:
@@ -120,10 +118,6 @@ class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
 
                 with (
                     patch(
-                        "comet.cometnet.manager.validate_message_security",
-                        new=AsyncMock(return_value=True),
-                    ),
-                    patch(
                         "comet.cometnet.manager.NodeIdentity.verify_hex_async",
                         new=AsyncMock(return_value=True),
                     ),
@@ -133,7 +127,7 @@ class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
                         new=AsyncMock(),
                     ) as broadcast_update,
                 ):
-                    await service._handle_pool_member_update("leaving-node", message)
+                    await service._apply_pool_member_update("leaving-node", message)
 
                 if accepted:
                     service.pool_store.store_manifest.assert_awaited_once()
@@ -150,6 +144,68 @@ class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     service.pool_store.store_manifest.assert_not_awaited()
                     broadcast_update.assert_not_awaited()
+
+    async def test_concurrent_remote_member_deltas_do_not_lose_updates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._pool_manifest())
+            service = CometNetService(enabled=True)
+            service.pool_store = store
+            service.transport = Mock(broadcast=AsyncMock())
+            active_writes = 0
+            peak_writes = 0
+
+            async def slow_write(path, content):
+                nonlocal active_writes, peak_writes
+                active_writes += 1
+                peak_writes = max(peak_writes, active_writes)
+                try:
+                    await asyncio.sleep(0.01)
+                    await write_text_atomic(path, content)
+                finally:
+                    active_writes -= 1
+
+            messages = [
+                PoolMemberUpdate(
+                    sender_id="creator-node",
+                    signature="delta-signature",
+                    pool_id="pool-a",
+                    action="add",
+                    member_key=member_key,
+                    updated_by="creator-key",
+                    manifest_signatures={"creator-key": "manifest-signature"},
+                )
+                for member_key in ("member-a", "member-b")
+            ]
+            with (
+                patch(
+                    "comet.cometnet.manager.validate_message_security",
+                    new=AsyncMock(return_value=True),
+                ),
+                patch(
+                    "comet.cometnet.manager.NodeIdentity.verify_hex_async",
+                    new=AsyncMock(return_value=True),
+                ),
+                patch(
+                    "comet.cometnet.manager.NodeIdentity.verify_hex",
+                    return_value=True,
+                ),
+                patch("comet.cometnet.pools.write_text_atomic", new=slow_write),
+            ):
+                await asyncio.gather(
+                    *(
+                        service._handle_pool_member_update("creator-node", message)
+                        for message in messages
+                    )
+                )
+
+            manifest = store.get_manifest("pool-a")
+            self.assertEqual(peak_writes, 1)
+            self.assertEqual(manifest.version, 3)
+            self.assertEqual(
+                {member.public_key for member in manifest.members},
+                {"creator-key", "member-a", "member-b"},
+            )
 
     async def test_received_torrent_save_failure_propagates_to_gossip(self):
         service = CometNetService(enabled=True)

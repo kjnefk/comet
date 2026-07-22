@@ -1081,6 +1081,13 @@ class CometNetService(CometNetBackend):
         ):
             return
 
+        async with self.pool_store.serialized_manifest_mutation():
+            await self._apply_pool_member_update(sender_id, message)
+
+    async def _apply_pool_member_update(
+        self, sender_id: str, message: PoolMemberUpdate
+    ) -> None:
+        """Apply an authenticated pool delta while the store mutation lock is held."""
         current_manifest = self.pool_store.get_manifest(message.pool_id)
         if not current_manifest:
             return

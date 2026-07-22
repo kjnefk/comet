@@ -18,6 +18,8 @@ import secrets
 import shutil
 import time
 import urllib.parse
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Set
@@ -457,6 +459,12 @@ class PoolStore:
         # Ensure directories exist
         self.manifests_dir.mkdir(parents=True, exist_ok=True)
         self.invites_dir.mkdir(parents=True, exist_ok=True)
+
+    @asynccontextmanager
+    async def serialized_manifest_mutation(self) -> AsyncIterator[None]:
+        """Serialize a complete trusted-manifest read/validate/write transition."""
+        async with self._mutation_lock:
+            yield
 
     async def load(self) -> None:
         """Load all data from disk."""
