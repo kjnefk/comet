@@ -518,43 +518,67 @@ class CometNetService(CometNetBackend):
         logger.log("COMETNET", "Stopping CometNet...")
 
         self._running = False
+        cleanup_errors = []
+
+        async def run_async_cleanup(name: str, awaitable) -> None:
+            try:
+                await awaitable
+            except BaseException as error:
+                cleanup_errors.append(error)
+                logger.warning(f"CometNet {name} cleanup failed: {error}")
+
+        def run_sync_cleanup(name: str, callback) -> None:
+            try:
+                callback()
+            except BaseException as error:
+                cleanup_errors.append(error)
+                logger.warning(f"CometNet {name} cleanup failed: {error}")
 
         # Stop periodic state save task
         if self._state_save_task:
             self._state_save_task.cancel()
             try:
-                await self._state_save_task
-            except asyncio.CancelledError:
-                pass
+                result = await asyncio.gather(
+                    self._state_save_task, return_exceptions=True
+                )
+            except BaseException as error:
+                cleanup_errors.append(error)
+                result = []
+            if result and isinstance(result[0], BaseException) and not isinstance(
+                result[0], asyncio.CancelledError
+            ):
+                cleanup_errors.append(result[0])
             self._state_save_task = None
 
-        await self._stop_background_tasks()
+        await run_async_cleanup("background task", self._stop_background_tasks())
 
         if save_state:
             # Save state before stopping
-            await self._save_state()
+            await run_async_cleanup("state save", self._save_state())
 
             # Save pools data
             if self.pool_store:
-                await self.pool_store.save()
+                await run_async_cleanup("pool save", self.pool_store.save())
 
         # Stop components in reverse order
         if self.gossip:
-            await self.gossip.stop()
+            await run_async_cleanup("gossip", self.gossip.stop())
 
         if self.discovery:
-            await self.discovery.stop()
+            await run_async_cleanup("discovery", self.discovery.stop())
 
         if self.transport:
-            await self.transport.stop()
+            await run_async_cleanup("transport", self.transport.stop())
 
         if self.upnp:
-            self.upnp.stop()
+            run_sync_cleanup("UPnP", self.upnp.stop)
 
         # Shutdown the dedicated crypto thread pool
-        shutdown_crypto_executor()
+        run_sync_cleanup("crypto executor", shutdown_crypto_executor)
 
         logger.log("COMETNET", "CometNet stopped")
+        if cleanup_errors:
+            raise cleanup_errors[0]
 
     async def _periodic_state_save(self) -> None:
         """

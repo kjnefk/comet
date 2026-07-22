@@ -6,6 +6,53 @@ from comet.cometnet.manager import CometNetService
 
 
 class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_shutdown_continues_after_cleanup_failures(self):
+        service = CometNetService(enabled=True)
+        service._running = True
+
+        class Component:
+            def __init__(self, error=None):
+                self.error = error
+                self.stopped = 0
+
+            async def stop(self):
+                self.stopped += 1
+                if self.error is not None:
+                    raise self.error
+
+        class PoolStore:
+            async def save(self):
+                raise RuntimeError("pool save failed")
+
+        class Upnp:
+            def __init__(self):
+                self.stopped = 0
+
+            def stop(self):
+                self.stopped += 1
+
+        gossip = Component(RuntimeError("gossip stop failed"))
+        discovery = Component()
+        transport = Component()
+        upnp = Upnp()
+        service.pool_store = PoolStore()
+        service.gossip = gossip
+        service.discovery = discovery
+        service.transport = transport
+        service.upnp = upnp
+
+        with (
+            patch("comet.cometnet.manager.shutdown_crypto_executor") as shutdown_crypto,
+            self.assertRaisesRegex(RuntimeError, "pool save failed"),
+        ):
+            await service.stop()
+
+        self.assertEqual(gossip.stopped, 1)
+        self.assertEqual(discovery.stopped, 1)
+        self.assertEqual(transport.stopped, 1)
+        self.assertEqual(upnp.stopped, 1)
+        shutdown_crypto.assert_called_once_with()
+
     async def test_failed_start_cleans_every_initialized_component(self):
         service = CometNetService(enabled=True)
 
