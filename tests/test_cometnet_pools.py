@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from comet.cometnet.pools import MemberRole, PoolManifest, PoolMember, PoolStore
 
@@ -159,6 +159,54 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
                         with self.assertRaisesRegex(OSError, "disk unavailable"):
                             await operation
 
+            self.assertEqual(store.get_memberships(), set())
+            self.assertEqual(store.get_subscriptions(), set())
+            self.assertEqual(store.get_all_pool_peers(), {})
+
+    async def test_delete_pool_cleans_persisted_and_published_state(self):
+        class Identity:
+            public_key_hex = "creator-key"
+
+            async def sign_hex_async(self, payload):
+                del payload
+                return "signature"
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._manifest())
+            await store.add_membership("pool-a")
+            await store.subscribe("pool-a")
+            await store.add_pool_peer("pool-a", "wss://peer")
+            await store.create_invite("pool-a", Identity())
+
+            self.assertTrue(await store.delete_pool("pool-a"))
+
+            self.assertIsNone(store.get_manifest("pool-a"))
+            self.assertEqual(store.get_memberships(), set())
+            self.assertEqual(store.get_subscriptions(), set())
+            self.assertEqual(store.get_all_pool_peers(), {})
+            self.assertEqual(store.get_invites("pool-a"), [])
+            self.assertFalse(Path(directory, "manifests", "pool-a.json").exists())
+            self.assertFalse(Path(directory, "invites", "pool-a").exists())
+
+    async def test_delete_failure_is_visible_without_hiding_cached_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._manifest())
+            await store.add_membership("pool-a")
+            await store.subscribe("pool-a")
+            await store.add_pool_peer("pool-a", "wss://peer")
+            manifest_path = Path(directory, "manifests", "pool-a.json")
+
+            with patch(
+                "comet.cometnet.pools.run_in_executor",
+                new=AsyncMock(side_effect=OSError("unlink failed")),
+            ):
+                with self.assertRaisesRegex(OSError, "unlink failed"):
+                    await store.delete_pool("pool-a")
+
+            self.assertIsNotNone(store.get_manifest("pool-a"))
+            self.assertTrue(manifest_path.exists())
             self.assertEqual(store.get_memberships(), set())
             self.assertEqual(store.get_subscriptions(), set())
             self.assertEqual(store.get_all_pool_peers(), {})

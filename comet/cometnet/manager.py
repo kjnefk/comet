@@ -7,7 +7,6 @@ Orchestrates all components: Identity, Transport, Discovery, Gossip, Reputation,
 
 import asyncio
 import json
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -34,8 +33,7 @@ from comet.cometnet.state import validate_state
 from comet.cometnet.transport import ConnectionManager
 from comet.cometnet.utils import (check_advertise_url_reachability,
                                   check_system_clock_sync, is_internal_domain,
-                                  is_private_or_internal_ip, run_in_executor,
-                                  shutdown_crypto_executor)
+                                  is_private_or_internal_ip, shutdown_crypto_executor)
 from comet.cometnet.validation import validate_message_security
 from comet.core.logger import logger
 from comet.core.models import settings
@@ -982,34 +980,7 @@ class CometNetService(CometNetBackend):
 
                     if was_member and not is_now_member:
                         # We were removed from this pool - clean up completely
-                        await self.pool_store.remove_membership(message.pool_id)
-                        await self.pool_store.unsubscribe(message.pool_id)
-                        await self.pool_store.remove_pool_peer(message.pool_id)
-
-                        # Remove the manifest since we're no longer a member
-                        if message.pool_id in self.pool_store._manifests:
-                            del self.pool_store._manifests[message.pool_id]
-
-                        # Remove any invites we had for this pool
-                        if message.pool_id in self.pool_store._invites:
-                            del self.pool_store._invites[message.pool_id]
-
-                        # Delete manifest file
-                        manifest_path = (
-                            self.pool_store.manifests_dir / f"{message.pool_id}.json"
-                        )
-                        try:
-                            manifest_path.unlink(missing_ok=True)
-                        except Exception:
-                            pass
-
-                        # Delete invites directory for this pool
-                        pool_inv_dir = self.pool_store.invites_dir / message.pool_id
-                        if pool_inv_dir.exists():
-                            try:
-                                await run_in_executor(shutil.rmtree, pool_inv_dir)
-                            except Exception:
-                                pass
+                        await self.pool_store.delete_pool(message.pool_id)
 
                         logger.log(
                             "COMETNET",

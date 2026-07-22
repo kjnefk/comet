@@ -408,30 +408,24 @@ class PoolStore:
         if pool_id not in self._manifests:
             return False
 
-        del self._manifests[pool_id]
         await self.remove_membership(pool_id)
         await self.unsubscribe(pool_id)
         await self.remove_pool_peer(pool_id)
 
-        # Delete invites for this pool
-        if pool_id in self._invites:
-            # Delete invite files
-            pool_inv_dir = self.invites_dir / pool_id
-            if pool_inv_dir.exists():
-                try:
-                    await run_in_executor(shutil.rmtree, pool_inv_dir)
-                except Exception:
-                    pass
-            del self._invites[pool_id]
+        await self._delete_pool_invites(pool_id)
 
         manifest_path = self.manifests_dir / f"{pool_id}.json"
-        try:
-            if manifest_path.exists():
-                await run_in_executor(manifest_path.unlink)
-        except Exception:
-            pass
+        if manifest_path.exists():
+            await run_in_executor(manifest_path.unlink)
+        del self._manifests[pool_id]
 
         return True
+
+    async def _delete_pool_invites(self, pool_id: str) -> None:
+        pool_inv_dir = self.invites_dir / pool_id
+        if pool_inv_dir.exists():
+            await run_in_executor(shutil.rmtree, pool_inv_dir)
+        self._invites.pop(pool_id, None)
 
     # ==================== Membership Operations ====================
 
@@ -579,15 +573,12 @@ class PoolStore:
         await self.unsubscribe(pool_id)
         await self.remove_pool_peer(pool_id)
 
-        # Remove the manifest from local storage
-        if pool_id in self._manifests:
-            del self._manifests[pool_id]
-            manifest_path = self.manifests_dir / f"{pool_id}.json"
-            try:
-                if manifest_path.exists():
-                    await run_in_executor(manifest_path.unlink)
-            except Exception:
-                pass
+        await self._delete_pool_invites(pool_id)
+
+        manifest_path = self.manifests_dir / f"{pool_id}.json"
+        if manifest_path.exists():
+            await run_in_executor(manifest_path.unlink)
+        del self._manifests[pool_id]
 
         logger.log("COMETNET", f"Left pool {pool_id}")
         return True
