@@ -32,6 +32,7 @@ from comet.cometnet.protocol import (AnyMessage, MessageType, PeerRequest,
                                      PoolMemberUpdate, TorrentAnnounce,
                                      TorrentMetadata)
 from comet.cometnet.reputation import ReputationStore
+from comet.cometnet.state import validate_state
 from comet.cometnet.transport import ConnectionManager
 from comet.cometnet.utils import (check_advertise_url_reachability,
                                   check_system_clock_sync, is_internal_domain,
@@ -2017,7 +2018,7 @@ class CometNetService(CometNetBackend):
         try:
             async with aiofiles.open(state_path, "r") as f:
                 content = await f.read()
-                state = json.loads(content)
+                state = validate_state(json.loads(content))
 
             # Verify state file integrity (detect tampering)
             stored_hash = state.pop("integrity_hash", None)
@@ -2038,24 +2039,21 @@ class CometNetService(CometNetBackend):
                         "Loading state anyway to prevent data loss."
                     )
 
-            # Load reputation data
-            if "reputation" in state and self.reputation:
+            # Validate addresses asynchronously before mutating any component.
+            if self.discovery:
+                await self.discovery.from_dict(state["discovery"])
+
+            if self.reputation:
                 self.reputation.from_dict(state["reputation"])
                 logger.log(
                     "COMETNET",
-                    f"Loaded reputation data for {len(state['reputation'].get('peers', {}))} peers",
+                    f"Loaded reputation data for {len(state['reputation']['peers'])} peers",
                 )
 
-            # Load keystore data
-            if "keystore" in state and self.keystore:
+            if self.keystore:
                 self.keystore.from_dict(state["keystore"])
 
-            # Load discovered peers
-            if "discovery" in state and self.discovery:
-                await self.discovery.from_dict(state["discovery"])
-
-            # Load gossip stats
-            if "gossip" in state and self.gossip:
+            if self.gossip:
                 self.gossip.from_dict(state["gossip"])
         except Exception as e:
             logger.warning(f"Failed to load CometNet state: {e}")

@@ -160,22 +160,24 @@ class PublicKeyStore:
 
     def from_dict(self, data: Dict) -> None:
         """Load from persisted data."""
-        keys_data = data.get("keys", {})
-        default_seen_time = time.time()
-
         # Sort by last_seen to preserve LRU order when reloading
         sorted_items = sorted(
-            keys_data.items(),
-            key=lambda x: x[1].get("last_seen", default_seen_time),
+            data["keys"].items(),
+            key=lambda item: item[1]["last_seen"],
         )
-
-        for node_id, key_info in sorted_items:
-            self._keys[node_id] = PeerKey(
-                node_id=node_id,
-                public_key_hex=key_info["public_key_hex"],
-                first_seen=key_info.get("first_seen", default_seen_time),
-                last_seen=key_info.get("last_seen", default_seen_time),
-                verified=key_info.get("verified", False),
+        keys = OrderedDict(
+            (
+                node_id,
+                PeerKey(
+                    node_id=node_id,
+                    public_key_hex=key_info["public_key_hex"],
+                    first_seen=key_info["first_seen"],
+                    last_seen=key_info["last_seen"],
+                    verified=key_info["verified"],
+                ),
             )
+            for node_id, key_info in sorted_items
+        )
+        self._keys = keys
 
         logger.log("COMETNET", f"Loaded {len(self._keys)} public keys from storage")

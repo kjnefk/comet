@@ -419,27 +419,26 @@ class DiscoveryService:
 
     async def from_dict(self, data: Dict) -> None:
         """Load known peers from persisted data."""
-        peers_data = data.get("known_peers", [])
-        default_last_seen = time.time()
-        loaded_count = 0
-        for peer_info in peers_data:
-            address = peer_info.get("address", "")
-            if not address:
-                continue
+        known_peers = {}
+        node_id_to_address = {}
+        for peer_info in data["known_peers"]:
+            address = peer_info["address"]
             # Validate before loading to prevent loading invalid data
-            allow_private = peer_info.get("source") in ("manual", "bootstrap")
+            allow_private = peer_info["source"] in ("manual", "bootstrap")
             if not await is_valid_peer_address(address, allow_private=allow_private):
                 continue
 
-            self._known_peers[address] = KnownPeer(
-                node_id=peer_info.get("node_id", ""),
+            known_peers[address] = KnownPeer(
+                node_id=peer_info["node_id"],
                 address=address,
-                source=peer_info.get("source", "pex"),
-                last_seen=peer_info.get("last_seen", default_last_seen),
+                source=peer_info["source"],
+                last_seen=peer_info["last_seen"],
             )
-            if peer_info.get("node_id"):
-                self._node_id_to_address[peer_info["node_id"]] = address
-            loaded_count += 1
+            if peer_info["node_id"]:
+                node_id_to_address[peer_info["node_id"]] = address
 
-        if loaded_count > 0:
-            logger.log("COMETNET", f"Loaded {loaded_count} persisted peers")
+        self._known_peers = known_peers
+        self._node_id_to_address = node_id_to_address
+
+        if known_peers:
+            logger.log("COMETNET", f"Loaded {len(known_peers)} persisted peers")
