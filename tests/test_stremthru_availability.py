@@ -1,6 +1,11 @@
 import unittest
+from unittest.mock import AsyncMock, patch
 
-from comet.debrid.stremthru import _prepare_cached_torrents
+from comet.debrid.exceptions import DebridLinkGenerationError
+from comet.debrid.stremthru import (
+    StremThru,
+    _prepare_cached_torrents,
+)
 
 
 class StremThruAvailabilityTests(unittest.TestCase):
@@ -44,3 +49,25 @@ class StremThruAvailabilityTests(unittest.TestCase):
             [filename for _, filename in torrents[0]["files"]],
             filenames,
         )
+
+
+class StremThruResponseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unexpected_link_error_is_typed_and_visible(self):
+        client = StremThru(None, None, None, "realdebrid:token", "")
+        with patch.object(
+            client,
+            "_post_store_json",
+            new=AsyncMock(side_effect=RuntimeError("transport failed")),
+        ):
+            with self.assertRaises(DebridLinkGenerationError) as raised:
+                await client.generate_download_link(
+                    "a" * 40,
+                    "0",
+                    "Movie.mkv",
+                    "Movie",
+                    None,
+                    None,
+                )
+
+        self.assertEqual(raised.exception.payload["error_type"], "RuntimeError")
+        self.assertIsInstance(raised.exception.__cause__, RuntimeError)

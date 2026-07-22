@@ -682,3 +682,11 @@ class StremThru:
             logger.exception(
                 f"Exception while getting download link for {hash} ({type(e).__name__}): {e!r}"
             )
+            raise DebridLinkGenerationError(
+                self.store_name,
+                f"{self.store_name}: Failed to generate download link.",
+                payload={
+                    "hash": hash,
+                    "error_type": type(e).__name__,
+                },
+            ) from e
