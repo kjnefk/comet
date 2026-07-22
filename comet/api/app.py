@@ -5,7 +5,6 @@ from contextlib import AsyncExitStack, asynccontextmanager
 import aiohttp
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
@@ -217,8 +216,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-app.mount("/static", StaticFiles(directory="comet/templates"), name="static")
 
 app.include_router(base.router)
 app.include_router(config.router)
