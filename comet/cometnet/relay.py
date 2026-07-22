@@ -7,13 +7,12 @@ dedicated CometNet standalone service.
 """
 
 import asyncio
-import traceback
 from typing import Any, Dict, List, Optional
 
 import aiohttp
 
 from comet.cometnet.interface import CometNetBackend
-from comet.core.logger import logger
+from comet.core.logger import censor_url, logger
 
 
 class CometNetRelay(CometNetBackend):
@@ -37,6 +36,7 @@ class CometNetRelay(CometNetBackend):
             api_key: Optional API key for authentication
         """
         self.relay_url = relay_url.rstrip("/")
+        self._display_url = censor_url(self.relay_url)
         self.timeout = timeout
         self.api_key = api_key
         self._session: Optional[aiohttp.ClientSession] = None
@@ -78,7 +78,7 @@ class CometNetRelay(CometNetBackend):
         self._flush_event.clear()
         self._batch_task = asyncio.create_task(self._batch_flush_loop())
 
-        logger.log("COMETNET", f"Relay client started - Target: {self.relay_url}")
+        logger.log("COMETNET", f"Relay client started - Target: {self._display_url}")
 
     async def stop(self):
         """Stop the relay client and flush remaining batch."""
@@ -163,8 +163,8 @@ class CometNetRelay(CometNetBackend):
                 await self._flush_batch()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                logger.debug(f"Relay batch flush error: {e}")
+            except Exception as error:
+                logger.debug(f"Relay batch flush error ({type(error).__name__})")
 
     async def _flush_batch(self):
         """Flush the current batch to the CometNet service."""
@@ -195,10 +195,9 @@ class CometNetRelay(CometNetBackend):
                 f"Relay batch send timed out after {self.timeout}s - "
                 f"Remote is likely overloaded ({len(batch_to_send)} torrents dropped)"
             )
-        except Exception as e:
+        except Exception as error:
             self._total_errors += len(batch_to_send)
-            logger.debug(f"Relay batch send failed: {e}")
-            logger.debug(traceback.format_exc())
+            logger.debug(f"Relay batch send failed ({type(error).__name__})")
 
     async def _send_single(self, torrent: Dict) -> bool:
         """Send a single torrent to the relay."""
@@ -211,18 +210,21 @@ class CometNetRelay(CometNetBackend):
                     self._total_relayed += 1
                     logger.log(
                         "COMETNET",
-                        f"Relayed torrent {torrent['info_hash']} to {self.relay_url}",
+                        f"Relayed torrent {torrent['info_hash']} to {self._display_url}",
                     )
                     return True
                 else:
                     self._total_errors += 1
                     logger.warning(
-                        f"Relay returned {response.status} from {self.relay_url}"
+                        f"Relay returned {response.status} from {self._display_url}"
                     )
                     return False
-        except aiohttp.ClientError as e:
+        except aiohttp.ClientError as error:
             self._total_errors += 1
-            logger.warning(f"Relay connection error to {self.relay_url}: {e}")
+            logger.warning(
+                f"Relay connection error to {self._display_url} "
+                f"({type(error).__name__})"
+            )
             return False
 
     async def _send_batch(self, torrents: List[Dict]) -> int:
@@ -255,18 +257,21 @@ class CometNetRelay(CometNetBackend):
                     self._total_errors += errors
                     logger.log(
                         "COMETNET",
-                        f"Relayed batch of {queued} torrents to {self.relay_url}",
+                        f"Relayed batch of {queued} torrents to {self._display_url}",
                     )
                     return queued
                 else:
                     self._total_errors += len(torrents)
                     logger.warning(
-                        f"Relay batch returned {response.status} from {self.relay_url}"
+                        f"Relay batch returned {response.status} from {self._display_url}"
                     )
                     return 0
-        except aiohttp.ClientError as e:
+        except aiohttp.ClientError as error:
             self._total_errors += len(torrents)
-            logger.warning(f"Relay batch connection error to {self.relay_url}: {e}")
+            logger.warning(
+                f"Relay batch connection error to {self._display_url} "
+                f"({type(error).__name__})"
+            )
             return 0
 
     async def health_check(self) -> bool:
@@ -287,7 +292,7 @@ class CometNetRelay(CometNetBackend):
         """Get relay statistics (merges remote stats with local relay stats)."""
         remote_stats = await self.fetch_remote_stats() or {}
         local_stats = {
-            "relay_url": self.relay_url,
+            "relay_url": self._display_url,
             "running": self._running,
             "total_relayed": self._total_relayed,
             "total_errors": self._total_errors,
@@ -315,9 +320,9 @@ class CometNetRelay(CometNetBackend):
                 else:
                     self._last_error = f"Remote error: {response.status}"
                 return None
-        except Exception as e:
-            self._last_error = f"Connection failed: {str(e)}"
-            logger.debug(f"Failed to fetch remote stats: {e}")
+        except Exception as error:
+            self._last_error = f"Connection failed ({type(error).__name__})"
+            logger.debug(f"Failed to fetch remote stats ({type(error).__name__})")
             return None
 
     async def get_peers(self) -> Dict[str, Any]:
@@ -358,9 +363,9 @@ class CometNetRelay(CometNetBackend):
                     return await self._handle_pool_response(response)
             else:
                 raise ValueError(f"Unsupported method: {method}")
-        except aiohttp.ClientError as e:
-            logger.warning(f"Pool request failed: {e}")
-            raise RuntimeError(f"Failed to connect to standalone: {e}")
+        except aiohttp.ClientError as error:
+            logger.warning(f"Pool request failed ({type(error).__name__})")
+            raise RuntimeError("Failed to connect to standalone") from error
 
     async def _handle_pool_response(self, response) -> Dict:
         """Handle response from standalone pool endpoints."""

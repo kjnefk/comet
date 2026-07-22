@@ -1,5 +1,8 @@
 import asyncio
 import unittest
+from unittest.mock import patch
+
+import aiohttp
 
 from comet.cometnet.relay import CometNetRelay
 
@@ -34,7 +37,30 @@ class FakeResponse:
         return self.payload
 
 
+class FailingResponse:
+    async def __aenter__(self):
+        raise aiohttp.ClientConnectionError("secret credential")
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        return False
+
+
 class CometNetRelayTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pool_transport_error_is_redacted(self):
+        relay = CometNetRelay("http://user:password@relay")
+        relay._running = True
+        relay._session = FakeSession(FailingResponse())
+
+        with (
+            patch("comet.cometnet.relay.logger.warning") as warning,
+            self.assertRaisesRegex(RuntimeError, "Failed to connect to standalone"),
+        ):
+            await relay._pool_request("POST", "/pools", {})
+
+        rendered = " ".join(str(value) for call in warning.call_args_list for value in call.args)
+        self.assertNotIn("password", rendered)
+        self.assertNotIn("secret credential", rendered)
+
     async def test_cancelled_flush_restores_batch_in_front(self):
         relay = CometNetRelay("http://relay")
         relay._session = FakeSession()
