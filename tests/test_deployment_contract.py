@@ -4,6 +4,13 @@ from pathlib import Path
 
 
 class DeploymentContractTests(unittest.TestCase):
+    def test_both_launchers_accept_forwarded_headers_without_setup(self):
+        launcher = Path("comet/main.py").read_text(encoding="utf-8")
+
+        self.assertIn('forwarded_allow_ips="*"', launcher)
+        self.assertIn('"forwarded_allow_ips": "*"', launcher)
+        self.assertNotIn("TRUSTED_PROXY_IPS", launcher)
+
     def test_runtime_image_drops_root_before_startup(self):
         dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
 
@@ -21,9 +28,9 @@ class DeploymentContractTests(unittest.TestCase):
         self.assertRegex(compose, r"cap_drop:\s+- ALL")
         self.assertIn("comet_data:/app/data", compose)
         self.assertIn("/tmp:size=64m,mode=1777", compose)
-        self.assertIn('${FASTAPI_PORT:-8000}:${FASTAPI_PORT:-8000}', compose)
-        self.assertIn('$${FASTAPI_PORT:-8000}/health', compose)
-        self.assertIn('${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}', compose)
+        self.assertIn("${FASTAPI_PORT:-8000}:${FASTAPI_PORT:-8000}", compose)
+        self.assertIn("$${FASTAPI_PORT:-8000}/health", compose)
+        self.assertIn("${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}", compose)
         self.assertNotIn("comet:comet@postgres", compose)
 
     def test_proxy_streams_without_body_cap_or_buffering(self):
@@ -56,8 +63,7 @@ class DeploymentContractTests(unittest.TestCase):
         )
 
         self.assertNotIn(
-            'entrypoint: ["uv", "run", "python", "-m", '
-            '"comet.cometnet.standalone"]',
+            'entrypoint: ["uv", "run", "python", "-m", "comet.cometnet.standalone"]',
             docs,
         )
         self.assertNotIn("comet:comet@postgres", docs)

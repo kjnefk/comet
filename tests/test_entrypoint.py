@@ -5,6 +5,18 @@ from comet.main import run_with_uvicorn
 
 
 class UvicornEntrypointTests(unittest.TestCase):
+    def test_forwarded_headers_need_no_proxy_allowlist(self):
+        server = Mock()
+        with (
+            patch("comet.main.uvicorn.Config", return_value=object()) as config,
+            patch("comet.main.uvicorn.Server", return_value=server),
+            patch("comet.main.log_startup_info"),
+        ):
+            run_with_uvicorn()
+
+        self.assertIs(config.call_args.kwargs["proxy_headers"], True)
+        self.assertEqual(config.call_args.kwargs["forwarded_allow_ips"], "*")
+
     def test_unexpected_server_failure_is_visible_to_the_process(self):
         server = Mock()
         server.run.side_effect = RuntimeError("startup failed")
