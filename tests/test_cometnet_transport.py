@@ -50,6 +50,19 @@ class CometNetTransportTests(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(ValueError):
                     ConnectionManager(_Identity(), **arguments)
 
+    async def test_unexpected_server_start_failure_is_visible(self):
+        manager = ConnectionManager(_Identity())
+
+        with patch(
+            "comet.cometnet.transport.websockets.serve",
+            new=AsyncMock(side_effect=RuntimeError("server bug")),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "server bug"):
+                await manager.start()
+
+        self.assertFalse(manager._running)
+        self.assertEqual(manager._tasks, set())
+
     async def test_outbound_handshake_reserves_global_capacity(self):
         manager = ConnectionManager(_Identity(), max_peers=1)
         manager._running = True
@@ -156,6 +169,44 @@ class CometNetTransportTests(unittest.IsolatedAsyncioTestCase):
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
+
+        self.assertEqual(manager._pending_connections, 0)
+        self.assertEqual(manager._connecting, set())
+        websocket.close.assert_awaited_once()
+
+    async def test_unexpected_connect_failure_propagates_after_rollback(self):
+        manager = ConnectionManager(_Identity(), max_peers=1)
+        manager._running = True
+
+        with patch(
+            "comet.cometnet.transport.websockets.connect",
+            side_effect=RuntimeError("connector bug"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "connector bug"):
+                await manager.connect_to_peer("wss://peer")
+
+        self.assertEqual(manager._pending_connections, 0)
+        self.assertEqual(manager._connecting, set())
+
+    async def test_unexpected_handshake_failure_propagates_and_closes(self):
+        manager = ConnectionManager(_Identity(), max_peers=1)
+        manager._running = True
+        websocket = AsyncMock()
+
+        async def connect(*args, **kwargs):
+            del args, kwargs
+            return websocket
+
+        with (
+            patch("comet.cometnet.transport.websockets.connect", new=connect),
+            patch.object(
+                manager.identity,
+                "sign_hex_async",
+                new=AsyncMock(side_effect=RuntimeError("signing failed")),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "signing failed"):
+                await manager.connect_to_peer("wss://peer")
 
         self.assertEqual(manager._pending_connections, 0)
         self.assertEqual(manager._connecting, set())

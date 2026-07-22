@@ -416,11 +416,14 @@ class ConnectionManager:
                 "COMETNET",
                 f"WebSocket server listening on port {self.listen_port}",
             )
-        except Exception as e:
+        except OSError as e:
             logger.warning(
                 f"Failed to start WebSocket server on port {self.listen_port}: {e}"
             )
             # Continue anyway - we can still make outbound connections
+        except BaseException:
+            self._running = False
+            raise
 
         # Start ping task
         ping_task = asyncio.create_task(self._ping_loop())
@@ -560,11 +563,6 @@ class ConnectionManager:
             raise
         except OSError as e:
             logger.debug(f"Connection error to {address}: {type(e).__name__}")
-            return None
-        except Exception as e:
-            logger.debug(
-                f"Unexpected error connecting to {address}: {type(e).__name__}: {e}"
-            )
             return None
         finally:
             async with self._connection_lock:
@@ -847,7 +845,10 @@ class ConnectionManager:
         except asyncio.TimeoutError:
             logger.debug(f"Handshake timeout with {client_ip}")
             return None
-        except Exception:
+        except (ConnectionClosed, WebSocketException, OSError) as error:
+            logger.debug(
+                f"Handshake transport error with {client_ip}: {type(error).__name__}"
+            )
             return None
 
     async def _receive_loop(self, conn: PeerConnection) -> None:
@@ -891,8 +892,11 @@ class ConnectionManager:
                                 logger.warning(f"Handler error for {message.type}: {e}")
                 except ConnectionClosed:
                     break
-        except Exception:
-            pass
+        except Exception as error:
+            logger.warning(
+                f"Receive loop failed for {conn.node_id[:8]}: "
+                f"{type(error).__name__}: {error}"
+            )
         finally:
             # Clean up connection
             if self._connections.get(conn.node_id) is conn:
