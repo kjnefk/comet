@@ -20,6 +20,38 @@ from comet.utils.parsing import (
 from comet.utils.torrent_cache import build_torrent_cache_where, normalize_search_params
 
 
+def _is_optional_int(value: object) -> bool:
+    return value is None or type(value) is int
+
+
+def _is_current_scrape_result(torrent: object) -> bool:
+    if not isinstance(torrent, dict):
+        return False
+
+    required_keys = {
+        "title",
+        "infoHash",
+        "fileIndex",
+        "seeders",
+        "size",
+        "tracker",
+        "sources",
+    }
+    return (
+        required_keys <= torrent.keys()
+        and isinstance(torrent["title"], str)
+        and bool(torrent["title"])
+        and isinstance(torrent["infoHash"], str)
+        and bool(torrent["infoHash"])
+        and _is_optional_int(torrent["fileIndex"])
+        and _is_optional_int(torrent["seeders"])
+        and _is_optional_int(torrent["size"])
+        and isinstance(torrent["tracker"], str)
+        and isinstance(torrent["sources"], list)
+        and all(isinstance(source, str) for source in torrent["sources"])
+    )
+
+
 class TorrentManager:
     def __init__(
         self,
@@ -259,14 +291,29 @@ class TorrentManager:
         if file_infos:
             await torrent_update_queue.add_torrent_infos(file_infos, self.media_only_id)
 
-    async def filter_manager(self, scraper_name: str, torrents: list):
+    async def filter_manager(self, scraper_name: str, torrents: object):
+        if not isinstance(torrents, list):
+            logger.warning(
+                f"Scraper {scraper_name} returned an invalid result container."
+            )
+            return
+
         if len(torrents) == 0:
             logger.log("SCRAPER", f"Scraper {scraper_name} found 0 torrents.")
             return
 
+        valid_torrents = [
+            torrent for torrent in torrents if _is_current_scrape_result(torrent)
+        ]
+        if len(valid_torrents) != len(torrents):
+            logger.warning(
+                f"Scraper {scraper_name} returned "
+                f"{len(torrents) - len(valid_torrents)} invalid torrents."
+            )
+
         new_torrents = [
             torrent
-            for torrent in torrents
+            for torrent in valid_torrents
             if (torrent["infoHash"], torrent["title"]) not in self.seen_hashes
         ]
 

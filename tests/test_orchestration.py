@@ -6,6 +6,58 @@ from comet.services.orchestration import TorrentManager, scraper_manager
 
 
 class TorrentOrchestrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_filter_manager_isolates_invalid_scraper_results(self):
+        manager = TorrentManager(
+            media_type="movie",
+            media_full_id="tt123",
+            media_only_id="tt123",
+            title="Movie",
+            year=2026,
+            year_end=None,
+            season=None,
+            episode=None,
+            aliases={},
+            remove_adult_content=False,
+        )
+        valid = {
+            "title": "Movie.2026.1080p.WEB-DL",
+            "infoHash": "a" * 40,
+            "fileIndex": None,
+            "seeders": 1,
+            "size": 1000,
+            "tracker": "Test",
+            "sources": [],
+        }
+
+        def passthrough(torrents, *args):
+            del args
+            return torrents
+
+        with (
+            patch("comet.services.orchestration.get_executor", return_value=None),
+            patch(
+                "comet.services.orchestration.filter_worker",
+                side_effect=passthrough,
+            ),
+        ):
+            await manager.filter_manager(
+                "ThirdParty",
+                [
+                    None,
+                    {"title": "Broken"},
+                    {
+                        "title": "Missing.fields",
+                        "infoHash": "b" * 40,
+                        "tracker": "Test",
+                        "sources": [],
+                    },
+                    valid,
+                ],
+            )
+            await manager.filter_manager("ThirdParty", None)
+
+        self.assertEqual(manager.ready_to_cache, [valid])
+
     async def test_scrape_waits_until_cache_updates_are_enqueued(self):
         manager = TorrentManager(
             media_type="movie",
