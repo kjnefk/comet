@@ -71,7 +71,10 @@ def _fetch_provider_meta(catalog_type: str, video_id: str):
             f"meta/{_provider_path(catalog_type)}/{_provider_path(video_id)}.json",
         )
     )
-    return response["meta"] if response else None
+    if not isinstance(response, dict):
+        return None
+    meta = response.get("meta")
+    return meta if isinstance(meta, dict) else None
 
 
 def _catalog_url(catalog_type: str, catalog_id: str, extra: str):
@@ -83,23 +86,36 @@ def _catalog_url(catalog_type: str, catalog_id: str, extra: str):
 
 
 def _catalog_specs(manifest: dict, catalog_type: str):
+    if not isinstance(manifest, dict):
+        return []
+    catalogs = manifest.get("catalogs")
+    if not isinstance(catalogs, list):
+        return []
+
     specs = []
-    for catalog in manifest.get("catalogs", ()):
-        if catalog["type"] != catalog_type:
+    for catalog in catalogs:
+        if not isinstance(catalog, dict) or catalog.get("type") != catalog_type:
             continue
 
         catalog_id = catalog.get("id")
-        if not catalog_id:
+        if not isinstance(catalog_id, str) or not catalog_id:
             continue
 
-        catalog_name = catalog.get("name") or catalog_id
+        catalog_name = catalog.get("name")
+        if catalog_name is None:
+            catalog_name = catalog_id
+        elif not isinstance(catalog_name, str) or not catalog_name:
+            continue
         if (
             catalog_type == "series"
             and catalog_name.strip().lower() in SERIES_CATALOG_EXCLUDED_NAMES
         ):
             continue
 
-        has_search = any(e.get("name") == "search" for e in catalog.get("extra", ()))
+        extra = catalog.get("extra", [])
+        has_search = isinstance(extra, list) and any(
+            isinstance(item, dict) and item.get("name") == "search" for item in extra
+        )
         specs.append({"id": catalog_id, "name": catalog_name, "has_search": has_search})
     return specs
 
