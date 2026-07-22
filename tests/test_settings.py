@@ -38,3 +38,33 @@ class AppSettingsTests(unittest.TestCase):
                     ValidationError, "work count must be a positive integer"
                 ):
                     AppSettings(_env_file=None, **{field: 0})
+
+    def test_boolean_concurrency_fails_configuration(self):
+        with self.assertRaisesRegex(
+            ValidationError, "operational numeric values cannot be booleans"
+        ):
+            AppSettings(_env_file=None, NYAA_MAX_CONCURRENT_PAGES=True)
+
+    def test_non_positive_cometnet_operations_fail_configuration(self):
+        for field in (
+            "COMETNET_STATE_SAVE_INTERVAL",
+            "COMETNET_GOSSIP_INTERVAL",
+            "COMETNET_GOSSIP_MAX_TORRENTS_PER_MESSAGE",
+            "COMETNET_PEX_BATCH_SIZE",
+            "COMETNET_TRANSPORT_MAX_MESSAGE_SIZE",
+            "COMETNET_TRANSPORT_PING_INTERVAL",
+            "COMETNET_TRANSPORT_RATE_LIMIT_WINDOW",
+        ):
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(
+                    ValidationError,
+                    "CometNet operational values must be finite and greater than zero",
+                ):
+                    AppSettings(_env_file=None, **{field: 0})
+
+    def test_non_finite_cometnet_interval_fails_configuration(self):
+        with self.assertRaisesRegex(
+            ValidationError,
+            "CometNet operational values must be finite and greater than zero",
+        ):
+            AppSettings(_env_file=None, COMETNET_GOSSIP_INTERVAL=float("inf"))

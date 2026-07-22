@@ -1,3 +1,4 @@
+import math
 import os
 import random
 import secrets
@@ -62,6 +63,29 @@ _POSITIVE_WORK_COUNT_FIELDS = (
     "BITMAGNET_MAX_CONCURRENT_PAGES",
     "BACKGROUND_SCRAPER_CONCURRENT_WORKERS",
     "FILTER_PARSE_CACHE_SHARDS",
+)
+_POSITIVE_COMETNET_OPERATION_FIELDS = (
+    "COMETNET_MAX_PEERS",
+    "COMETNET_TIME_CHECK_TIMEOUT",
+    "COMETNET_REACHABILITY_RETRIES",
+    "COMETNET_REACHABILITY_TIMEOUT",
+    "COMETNET_UPNP_LEASE_DURATION",
+    "COMETNET_STATE_SAVE_INTERVAL",
+    "COMETNET_GOSSIP_INTERVAL",
+    "COMETNET_GOSSIP_MESSAGE_TTL",
+    "COMETNET_GOSSIP_MAX_TORRENTS_PER_MESSAGE",
+    "COMETNET_GOSSIP_TORRENT_MAX_AGE",
+    "COMETNET_PEX_BATCH_SIZE",
+    "COMETNET_PEER_CONNECT_BACKOFF_MAX",
+    "COMETNET_PEER_MAX_FAILURES",
+    "COMETNET_PEER_CLEANUP_AGE",
+    "COMETNET_TRANSPORT_MAX_MESSAGE_SIZE",
+    "COMETNET_TRANSPORT_MAX_CONNECTIONS_PER_IP",
+    "COMETNET_TRANSPORT_PING_INTERVAL",
+    "COMETNET_TRANSPORT_CONNECTION_TIMEOUT",
+    "COMETNET_TRANSPORT_MAX_LATENCY_MS",
+    "COMETNET_TRANSPORT_RATE_LIMIT_COUNT",
+    "COMETNET_TRANSPORT_RATE_LIMIT_WINDOW",
 )
 
 
@@ -396,6 +420,24 @@ class AppSettings(BaseSettings):
     def validate_positive_work_count(cls, value):
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError("work count must be a positive integer")
+        return value
+
+    @field_validator(
+        *_POSITIVE_WORK_COUNT_FIELDS,
+        *_POSITIVE_COMETNET_OPERATION_FIELDS,
+        mode="before",
+    )
+    def reject_boolean_operational_numbers(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("operational numeric values cannot be booleans")
+        return value
+
+    @field_validator(*_POSITIVE_COMETNET_OPERATION_FIELDS)
+    def validate_positive_cometnet_operation_value(cls, value):
+        if value is None or not math.isfinite(value) or value <= 0:
+            raise ValueError(
+                "CometNet operational values must be finite and greater than zero"
+            )
         return value
 
     @field_validator("EXECUTOR_MAX_WORKERS", mode="before")
