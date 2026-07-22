@@ -27,7 +27,7 @@ import asyncio
 import secrets
 import sys
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import List, Optional
 
 import uvicorn
@@ -187,27 +187,27 @@ class StandaloneCometNet:
 
         @asynccontextmanager
         async def lifespan(app: FastAPI):
-            await setup_database()
-            setup_executor()
+            async with AsyncExitStack() as cleanup:
+                await setup_database()
+                cleanup.push_async_callback(teardown_database)
 
-            self.service.set_save_torrent_callback(
-                torrent_update_queue.add_network_torrent
-            )
-            self.service.set_check_torrents_exist_callback(check_torrents_exist)
+                setup_executor()
+                cleanup.callback(shutdown_executor)
+                cleanup.push_async_callback(torrent_update_queue.stop)
 
-            await self.service.start()
-            logger.log(
-                "COMETNET",
-                f"Standalone server started - WS:{self.ws_port} HTTP:{self.http_port}",
-            )
+                self.service.set_save_torrent_callback(
+                    torrent_update_queue.add_network_torrent
+                )
+                self.service.set_check_torrents_exist_callback(check_torrents_exist)
 
-            yield
+                cleanup.push_async_callback(self.service.stop)
+                await self.service.start()
+                logger.log(
+                    "COMETNET",
+                    f"Standalone server started - WS:{self.ws_port} HTTP:{self.http_port}",
+                )
 
-            await self.service.stop()
-            await torrent_update_queue.stop()
-
-            await teardown_database()
-            shutdown_executor()
+                yield
 
             logger.log("COMETNET", "Standalone server stopped")
 

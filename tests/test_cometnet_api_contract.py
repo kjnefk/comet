@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -16,6 +16,7 @@ from comet.cometnet.standalone import (
     BroadcastRequest,
     CreateInviteRequest,
     JoinPoolRequest,
+    StandaloneCometNet,
 )
 
 
@@ -83,3 +84,45 @@ class CometNetEndpointErrorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.status_code, 400)
         self.assertEqual(caught.exception.detail, "Invalid pool request")
         self.assertNotIn("secret", caught.exception.detail)
+
+
+class CometNetStandaloneLifespanTests(unittest.IsolatedAsyncioTestCase):
+    async def test_partial_startup_failure_runs_every_registered_cleanup(self):
+        standalone = object.__new__(StandaloneCometNet)
+        standalone.ws_port = 8765
+        standalone.http_port = 8766
+        standalone._start_time = 0
+        standalone._broadcasts_received = 0
+        standalone._broadcasts_success = 0
+        standalone.service = Mock(
+            set_save_torrent_callback=Mock(),
+            set_check_torrents_exist_callback=Mock(),
+            start=AsyncMock(side_effect=RuntimeError("startup failed")),
+            stop=AsyncMock(),
+        )
+
+        setup_database = AsyncMock()
+        teardown_database = AsyncMock()
+        setup_executor = Mock()
+        shutdown_executor = Mock()
+        queue_stop = AsyncMock()
+
+        with (
+            patch("comet.cometnet.standalone.setup_database", new=setup_database),
+            patch("comet.cometnet.standalone.teardown_database", new=teardown_database),
+            patch("comet.cometnet.standalone.setup_executor", new=setup_executor),
+            patch("comet.cometnet.standalone.shutdown_executor", new=shutdown_executor),
+            patch(
+                "comet.cometnet.standalone.torrent_update_queue.stop",
+                new=queue_stop,
+            ),
+        ):
+            app = standalone._create_app()
+            with self.assertRaisesRegex(RuntimeError, "startup failed"):
+                async with app.router.lifespan_context(app):
+                    pass
+
+        standalone.service.stop.assert_awaited_once_with()
+        queue_stop.assert_awaited_once_with()
+        shutdown_executor.assert_called_once_with()
+        teardown_database.assert_awaited_once_with()
