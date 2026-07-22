@@ -217,20 +217,41 @@ COUNTRY_TO_LANGUAGE = {
 
 
 def alias_language(scope: str) -> str | None:
-    if scope.startswith("lang:"):
-        language = scope[5:]
-        if len(language) == 2 and language.isascii() and language.isalpha():
-            return language
-        return None
+    for prefix in ("lang:", "original:"):
+        if scope.startswith(prefix):
+            language = scope[len(prefix) :]
+            if len(language) == 2 and language.isascii() and language.isalpha():
+                return language
+            return None
     return COUNTRY_TO_LANGUAGE.get(scope)
+
+
+def merge_aliases(*collections: object) -> dict[str, list[str]]:
+    merged: dict[str, list[str]] = {}
+    seen: dict[str, set[str]] = {}
+    for aliases in collections:
+        if not isinstance(aliases, dict):
+            continue
+        for scope, titles in aliases.items():
+            if not isinstance(scope, str) or not isinstance(titles, list):
+                continue
+            scope_seen = seen.setdefault(scope, set())
+            for title in titles:
+                if isinstance(title, str) and title and title not in scope_seen:
+                    scope_seen.add(title)
+                    merged.setdefault(scope, []).append(title)
+    return merged
 
 
 def select_indexer_titles(
     title: str,
     aliases: object,
     languages: list[str],
+    *,
+    include_canonical: bool = True,
+    include_original: bool = True,
 ) -> tuple[str, ...]:
-    """Return ordered, unique search titles for the configured languages."""
+    """Return the bounded, ordered set of titles requested by the operator."""
 
     selected = []
     seen = set()
@@ -240,26 +261,57 @@ def select_indexer_titles(
             candidate := " ".join(candidate.split())
         ):
             return
-        identity = unicodedata.normalize("NFKC", candidate).casefold()
+        identity = "".join(
+            character
+            for character in unicodedata.normalize("NFKD", candidate.casefold())
+            if not unicodedata.combining(character)
+        )
         if identity in seen:
             return
         seen.add(identity)
         selected.append(candidate)
 
-    append(title)
-    if not languages or not isinstance(aliases, dict):
+    if include_canonical:
+        append(title)
+
+    if not isinstance(aliases, dict):
+        if not selected:
+            append(title)
         return tuple(selected)
 
+    if include_original:
+        original_count = len(selected)
+        for scope, scope_titles in aliases.items():
+            if not isinstance(scope, str) or not isinstance(scope_titles, list):
+                continue
+            normalized_scope = scope.lower()
+            if normalized_scope != "original" and not normalized_scope.startswith(
+                "original:"
+            ):
+                continue
+            for alias in scope_titles:
+                append(alias)
+                if len(selected) > original_count:
+                    break
+            if len(selected) > original_count:
+                break
+
     aliases_by_language: dict[str, list[str]] = {}
-    for country, country_titles in aliases.items():
-        if not isinstance(country, str) or not isinstance(country_titles, list):
+    for scope, scope_titles in aliases.items():
+        if not isinstance(scope, str) or not isinstance(scope_titles, list):
             continue
-        language = alias_language(country.lower())
+        language = alias_language(scope.lower())
         if language is not None:
-            aliases_by_language.setdefault(language, []).extend(country_titles)
+            aliases_by_language.setdefault(language, []).extend(scope_titles)
 
     for language in languages:
+        language_count = len(selected)
         for alias in aliases_by_language.get(language, ()):
             append(alias)
+            if len(selected) > language_count:
+                break
+
+    if not selected:
+        append(title)
 
     return tuple(selected)

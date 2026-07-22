@@ -138,7 +138,14 @@ class TorrentManager:
                 self.title,
                 self.aliases,
                 settings.INDEXER_LANGUAGES,
+                include_canonical=settings.INDEXER_INCLUDE_CANONICAL_TITLE,
+                include_original=settings.INDEXER_INCLUDE_ORIGINAL_TITLE,
             ),
+        )
+        titles = " · ".join(f"“{title}”" for title in request.query_titles)
+        logger.log(
+            "SCRAPER",
+            f"🔤 Indexer titles ({len(request.query_titles)}): {titles}",
         )
 
         async for scraper_name, results, response_time in scraper_manager.scrape_all(

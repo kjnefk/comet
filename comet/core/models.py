@@ -183,6 +183,8 @@ class AppSettings(BaseSettings):
     INDEXER_MANAGER_INDEXERS: List[str] = []
     INDEXER_MANAGER_UPDATE_INTERVAL: Optional[int] = 900
     INDEXER_MANAGER_WAIT_TIMEOUT: Optional[int] = 30
+    INDEXER_INCLUDE_CANONICAL_TITLE: bool = True
+    INDEXER_INCLUDE_ORIGINAL_TITLE: bool = True
     INDEXER_LANGUAGES: List[str] = Field(default_factory=list)
     SCRAPE_JACKETT: Union[bool, str] = False
     JACKETT_URL: Optional[str] = "http://127.0.0.1:9117"

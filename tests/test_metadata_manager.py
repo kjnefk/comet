@@ -2,7 +2,7 @@ import asyncio
 import time
 import unittest
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from databases import Database
 
@@ -13,6 +13,7 @@ from comet.metadata.manager import (
     _alias_cache_timestamp,
     _CacheEntry,
 )
+from comet.services.anime import anime_mapper
 
 
 class _SharedMetadataState:
@@ -91,6 +92,61 @@ class _MetadataScraper(MetadataScraper):
 
 
 class MetadataRefreshTests(unittest.IsolatedAsyncioTestCase):
+    async def test_imdb_anime_aliases_are_merged_with_tmdb_languages(self):
+        scraper = MetadataScraper(session=None)
+        with (
+            patch.object(anime_mapper, "is_loaded", return_value=True),
+            patch.object(anime_mapper, "is_anime_content", return_value=True),
+            patch.object(
+                anime_mapper,
+                "get_aliases",
+                new=AsyncMock(return_value={"original": ["Romaji"], "ez": ["Synonym"]}),
+            ),
+            patch(
+                "comet.metadata.manager.TMDBApi.get_title_aliases",
+                new=AsyncMock(return_value={"lang:fr": ["Titre français"]}),
+            ),
+        ):
+            aliases = await scraper.get_aliases("movie", "tt123", "imdb")
+
+        self.assertEqual(
+            aliases,
+            {
+                "original": ["Romaji"],
+                "ez": ["Synonym"],
+                "lang:fr": ["Titre français"],
+            },
+        )
+
+    async def test_kitsu_aliases_use_existing_imdb_mapping_for_tmdb_languages(self):
+        scraper = MetadataScraper(session=None)
+        with (
+            patch.object(anime_mapper, "is_loaded", return_value=True),
+            patch.object(anime_mapper, "is_anime_content", return_value=True),
+            patch.object(
+                anime_mapper,
+                "get_aliases",
+                new=AsyncMock(return_value={"original": ["Romaji"]}),
+            ),
+            patch.object(
+                anime_mapper,
+                "get_imdb_from_kitsu",
+                new=AsyncMock(return_value="tt123"),
+            ) as get_imdb,
+            patch(
+                "comet.metadata.manager.TMDBApi.get_title_aliases",
+                new=AsyncMock(return_value={"lang:fr": ["Titre français"]}),
+            ) as get_tmdb,
+        ):
+            aliases = await scraper.get_aliases("series", "456", "kitsu")
+
+        get_imdb.assert_awaited_once_with("456")
+        get_tmdb.assert_awaited_once_with("series", "tt123")
+        self.assertEqual(
+            aliases,
+            {"original": ["Romaji"], "lang:fr": ["Titre français"]},
+        )
+
     def test_alias_failure_timestamp_expires_after_short_retry_delay(self):
         current_time = 10_000_000.0
 

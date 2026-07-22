@@ -1,11 +1,38 @@
 import unittest
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from comet.core.models import AppSettings
+from comet.core.logger import log_startup_info
+from comet.core.models import AppSettings, settings as runtime_settings
 
 
 class AppSettingsTests(unittest.TestCase):
+    def test_startup_logs_indexer_title_configuration(self):
+        with (
+            patch.object(runtime_settings, "INDEXER_LANGUAGES", ["it", "fr"]),
+            patch.object(runtime_settings, "INDEXER_INCLUDE_CANONICAL_TITLE", True),
+            patch.object(runtime_settings, "INDEXER_INCLUDE_ORIGINAL_TITLE", False),
+            patch("comet.core.logger.logger.log") as log,
+            patch("comet.core.logger.logger.warning"),
+        ):
+            log_startup_info(runtime_settings)
+
+        self.assertIn(
+            (
+                "COMET",
+                "Indexer Title Search: INDEXER_INCLUDE_CANONICAL_TITLE=True - "
+                "INDEXER_INCLUDE_ORIGINAL_TITLE=False - INDEXER_LANGUAGES=it, fr",
+            ),
+            [call.args for call in log.call_args_list],
+        )
+
+    def test_indexer_title_sources_have_recall_oriented_defaults(self):
+        settings = AppSettings(_env_file=None)
+
+        self.assertTrue(settings.INDEXER_INCLUDE_CANONICAL_TITLE)
+        self.assertTrue(settings.INDEXER_INCLUDE_ORIGINAL_TITLE)
+
     def test_indexer_languages_are_normalized_and_deduplicated(self):
         settings = AppSettings(
             _env_file=None,

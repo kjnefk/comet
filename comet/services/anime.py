@@ -129,22 +129,25 @@ class AnimeMapper:
         if not isinstance(title, str) or not title:
             title = None
         raw_synonyms = data.get("synonyms")
-        synonyms = (
-            [value for value in raw_synonyms if isinstance(value, str) and value]
-            if isinstance(raw_synonyms, list)
-            else []
-        )
+
+        synonyms = []
+        seen = set()
+        for value in raw_synonyms if isinstance(raw_synonyms, list) else []:
+            if not isinstance(value, str) or not value or value == title:
+                continue
+            if value not in seen:
+                seen.add(value)
+                synonyms.append(value)
 
         if not title and not synonyms:
             return {}
 
-        aliases = []
-        seen = set()
-        for value in ([title] if title else []) + synonyms:
-            if value not in seen:
-                seen.add(value)
-                aliases.append(value)
-        return {"ez": aliases}
+        aliases = {}
+        if title:
+            aliases["original"] = [title]
+        if synonyms:
+            aliases["ez"] = synonyms
+        return aliases
 
     async def get_imdb_from_kitsu(self, kitsu_id: str | int):
         if not self.loaded:

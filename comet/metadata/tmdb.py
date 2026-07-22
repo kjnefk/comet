@@ -4,6 +4,7 @@ import aiohttp
 
 from comet.core.logger import logger
 from comet.core.models import settings
+from comet.utils.languages import merge_aliases
 
 DEFAULT_TMDB_READ_ACCESS_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlNTkxMmVmOWFhM2IxNzg2Zjk3ZTE1NWY1YmQ3ZjY1MSIsInN1YiI6IjY1M2NjNWUyZTg5NGE2MDBmZjE2N2FmYyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.xrIXsMFJpI1o1j5g2QpQcFP1X3AfRjFA5FlBFO5Naw8"
 
@@ -118,18 +119,6 @@ def _extract_title_aliases(payload, result_key: str) -> dict[str, list[str]]:
     return aliases
 
 
-def _merge_title_aliases(
-    destination: dict[str, list[str]], source: dict[str, list[str]]
-) -> None:
-    for country, titles in source.items():
-        current = destination.setdefault(country, [])
-        seen = set(current)
-        for title in titles:
-            if title not in seen:
-                seen.add(title)
-                current.append(title)
-
-
 def _extract_original_title(payload: object, title_key: str) -> dict[str, list[str]]:
     if not isinstance(payload, dict):
         return {}
@@ -145,8 +134,8 @@ def _extract_original_title(payload: object, title_key: str) -> dict[str, list[s
         and normalized_language.isascii()
         and normalized_language.isalpha()
     ):
-        return {f"lang:{normalized_language}": [title]}
-    return {"ez": [title]}
+        return {f"original:{normalized_language}": [title]}
+    return {"original": [title]}
 
 
 def _extract_translated_titles(payload: object, title_key: str) -> dict[str, list[str]]:
@@ -183,18 +172,13 @@ def _extract_all_title_aliases(payload: object, config: dict) -> dict[str, list[
     if not isinstance(payload, dict):
         return {}
 
-    aliases = _extract_original_title(payload, config["original_title"])
-    _merge_title_aliases(
-        aliases,
+    return merge_aliases(
+        _extract_original_title(payload, config["original_title"]),
         _extract_translated_titles(payload.get("translations"), config["title"]),
-    )
-    _merge_title_aliases(
-        aliases,
         _extract_title_aliases(
             payload.get("alternative_titles"), config["alias_results"]
         ),
     )
-    return aliases
 
 
 class TMDBApi:

@@ -10,6 +10,7 @@ from comet.core.database import database, encode_json_param
 from comet.core.logger import logger
 from comet.core.models import settings
 from comet.services.anime import anime_mapper
+from comet.utils.languages import merge_aliases
 from comet.utils.parsing import parse_media_id
 
 from .imdb import get_imdb_metadata
@@ -399,25 +400,56 @@ class MetadataScraper:
         media_id: str,
         provider: str | None = None,
     ) -> dict[str, list[str]] | None:
-        if anime_mapper.is_loaded():
-            full_media_id = f"{provider}:{media_id}"
+        anime_aliases = {}
+        anime_aliases_logged = False
+        anime_mapping_loaded = anime_mapper.is_loaded()
+        full_media_id = f"{provider}:{media_id}"
+        is_anime = anime_mapping_loaded and anime_mapper.is_anime_content(
+            full_media_id, media_id
+        )
 
-            if anime_mapper.is_anime_content(full_media_id, media_id):
-                aliases = await anime_mapper.get_aliases(full_media_id)
-                logger.log(
-                    "SCRAPER",
-                    f"📜 Found {len(aliases.get('ez', []))} Anime title aliases for {media_id}",
+        pending = {}
+        if is_anime:
+            pending["anime"] = asyncio.create_task(
+                anime_mapper.get_aliases(full_media_id)
+            )
+        if provider == "kitsu":
+            if anime_mapping_loaded:
+                pending["imdb_id"] = asyncio.create_task(
+                    anime_mapper.get_imdb_from_kitsu(media_id)
                 )
-                if aliases:
-                    return aliases
+        else:
+            pending["tmdb"] = asyncio.create_task(
+                TMDBApi(self.session).get_title_aliases(media_type, media_id)
+            )
+
+        if pending:
+            await asyncio.gather(*pending.values())
+
+        if anime_task := pending.get("anime"):
+            anime_aliases = anime_task.result()
+            anime_alias_count = sum(len(titles) for titles in anime_aliases.values())
+            message = (
+                f"📜 Found {anime_alias_count} Anime title aliases for {media_id}"
+                if anime_alias_count
+                else f"📜 No Anime title aliases found for {media_id}"
+            )
+            logger.log("SCRAPER", message)
+            anime_aliases_logged = True
 
         if provider == "kitsu":
-            logger.log("SCRAPER", f"📜 No Anime title aliases found for {media_id}")
-            return {}
+            if not anime_aliases_logged:
+                logger.log("SCRAPER", f"📜 No Anime title aliases found for {media_id}")
+            imdb_task = pending.get("imdb_id")
+            imdb_id = imdb_task.result() if imdb_task else None
+            if imdb_id is None:
+                return anime_aliases
+            tmdb_aliases = await TMDBApi(self.session).get_title_aliases(
+                media_type, imdb_id
+            )
+        else:
+            tmdb_aliases = pending["tmdb"].result()
 
-        tmdb_aliases = await TMDBApi(self.session).get_title_aliases(
-            media_type, media_id
-        )
         if tmdb_aliases:
             total_aliases = sum(len(titles) for titles in tmdb_aliases.values())
             logger.log(
@@ -427,4 +459,4 @@ class MetadataScraper:
         elif tmdb_aliases is not None:
             logger.log("SCRAPER", f"📜 No TMDB title aliases found for {media_id}")
 
-        return tmdb_aliases
+        return merge_aliases(anime_aliases, tmdb_aliases)

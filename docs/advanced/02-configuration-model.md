@@ -58,7 +58,11 @@ Behavior:
 5. Scrapers/indexers
 - `SCRAPE_*` flags and related URL/API key variables
 - Jackett/Prowlarr indexer manager settings
-- `INDEXER_LANGUAGES`: ISO 639-1 language codes whose TMDB original/localized titles are searched in addition to the canonical title by every title-based scraper. The default `[]` preserves single-title searches.
+- `INDEXER_INCLUDE_CANONICAL_TITLE`: includes Comet's canonical metadata title. Defaults to `True`.
+- `INDEXER_INCLUDE_ORIGINAL_TITLE`: includes one original TMDB or anime-mapping title. Defaults to `True`.
+- `INDEXER_LANGUAGES`: includes at most one TMDB title per configured ISO 639-1 language. Defaults to `[]`.
+
+These sources are independent and apply to every title-based scraper. Titles are deduplicated ignoring case and accents, and Comet safely falls back to the canonical title if the selected sources produce no usable title.
 
 6. Background jobs
 - `BACKGROUND_SCRAPER_*`

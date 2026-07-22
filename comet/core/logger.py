@@ -391,6 +391,14 @@ def log_startup_info(settings):
         "COMET",
         f"Indexer Manager Update Interval: {settings.INDEXER_MANAGER_UPDATE_INTERVAL}s",
     )
+    indexer_languages = ", ".join(settings.INDEXER_LANGUAGES) or "Disabled"
+    logger.log(
+        "COMET",
+        "Indexer Title Search: "
+        f"INDEXER_INCLUDE_CANONICAL_TITLE={settings.INDEXER_INCLUDE_CANONICAL_TITLE} - "
+        f"INDEXER_INCLUDE_ORIGINAL_TITLE={settings.INDEXER_INCLUDE_ORIGINAL_TITLE} - "
+        f"INDEXER_LANGUAGES={indexer_languages}",
+    )
     logger.log("COMET", f"Get Torrent Timeout: {settings.GET_TORRENT_TIMEOUT}s")
     logger.log("COMET", f"Magnet Resolve Timeout: {settings.MAGNET_RESOLVE_TIMEOUT}s")
     logger.log("COMET", f"Catalog Timeout: {settings.CATALOG_TIMEOUT}s")

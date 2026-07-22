@@ -99,7 +99,7 @@ class TmdbMetadataTests(unittest.TestCase):
         self.assertEqual(
             _extract_all_title_aliases(payload, config),
             {
-                "lang:it": ["La vita davanti a sé"],
+                "original:it": ["La vita davanti a sé"],
                 "lang:fr": ["La Vie devant soi"],
                 "us": ["The Life Ahead"],
             },
@@ -150,7 +150,7 @@ class TmdbApiTests(unittest.IsolatedAsyncioTestCase):
 
         aliases = await TMDBApi(session).get_title_aliases("series", "tt6468322")
 
-        self.assertEqual(aliases, {"lang:es": ["La casa de papel"]})
+        self.assertEqual(aliases, {"original:es": ["La casa de papel"]})
         self.assertTrue(session.requests[0][0].endswith("external_source=imdb_id"))
         self.assertTrue(
             session.requests[1][0].endswith(

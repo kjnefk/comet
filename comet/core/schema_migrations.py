@@ -964,6 +964,20 @@ async def _migration_tmdb_title_aliases(ctx: MigrationContext):
     return True
 
 
+async def _migration_original_indexer_titles(ctx: MigrationContext):
+    await _ensure_managed_table(ctx, MEDIA_METADATA_CACHE_TABLE_SPEC)
+    await ctx.database.execute(
+        """
+        UPDATE media_metadata_cache
+        SET aliases_updated_at = NULL
+        WHERE media_id LIKE :imdb_prefix
+        OR media_id LIKE :kitsu_prefix
+        """,
+        {"imdb_prefix": "imdb:%", "kitsu_prefix": "kitsu:%"},
+    )
+    return True
+
+
 MIGRATIONS = [
     ("2026030901_foundation", _migration_foundation),
     ("2026030902_backfill_canonical_tables", _migration_backfill_canonical_tables),
@@ -978,4 +992,5 @@ MIGRATIONS = [
     ),
     ("2026072201_tmdb_title_aliases", _migration_tmdb_title_aliases),
     ("2026072202_tmdb_localized_titles", _migration_tmdb_title_aliases),
+    ("2026072203_original_indexer_titles", _migration_original_indexer_titles),
 ]

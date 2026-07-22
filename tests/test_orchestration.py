@@ -31,14 +31,21 @@ class TorrentOrchestrationTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(settings, "INDEXER_LANGUAGES", ["it"]),
+            patch.object(settings, "INDEXER_INCLUDE_CANONICAL_TITLE", False),
+            patch.object(settings, "INDEXER_INCLUDE_ORIGINAL_TITLE", True),
             patch.object(scraper_manager, "scrape_all", new=capture_request),
             patch.object(manager, "cache_torrents"),
+            patch("comet.services.orchestration.logger.log") as log,
         ):
             await manager.scrape_torrents()
 
         self.assertEqual(
             captured[0].query_titles,
-            ("The Life Ahead", "La vita davanti a sé"),
+            ("La vita davanti a sé",),
+        )
+        log.assert_any_call(
+            "SCRAPER",
+            "🔤 Indexer titles (1): “La vita davanti a sé”",
         )
 
     async def test_filter_manager_logs_scraper_response_time(self):

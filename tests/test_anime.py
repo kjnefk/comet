@@ -29,7 +29,7 @@ class AnimeMapperTests(unittest.IsolatedAsyncioTestCase):
         ):
             aliases = await mapper.get_aliases("tt123")
 
-        self.assertEqual(aliases, {"ez": ["Main", "Alt"]})
+        self.assertEqual(aliases, {"original": ["Main"], "ez": ["Alt"]})
 
     def test_malformed_kitsu_identifier_is_rejected(self):
         self.assertEqual(AnimeMapper._parse_media_id("kitsu"), (None, None))
