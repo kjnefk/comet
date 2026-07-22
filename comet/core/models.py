@@ -24,6 +24,7 @@ from RTN.models import (
     QualityRankModel,
     ResolutionConfig,
     RipsRankModel,
+    TrashRankModel,
 )
 
 from comet.core.db_router import ReplicaAwareDatabase
@@ -771,6 +772,7 @@ class CometSettingsModel(SettingsModel):
             site=CustomRank(fetch=True),
             upscaled=CustomRank(fetch=True),
         ),
+        trash=TrashRankModel(size=CustomRank(fetch=True)),
     )
 
 

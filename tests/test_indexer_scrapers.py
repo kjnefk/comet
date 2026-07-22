@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 from comet.scrapers.jackett import JackettScraper
 from comet.scrapers.models import ScrapeRequest
 from comet.scrapers.prowlarr import ProwlarrScraper
+from comet.scrapers.stremthru import StremthruScraper
 
 
 REQUEST = ScrapeRequest(
@@ -24,6 +25,28 @@ def _torrent(info_hash):
         "tracker": "indexer",
         "sources": [],
     }
+
+
+class _StremthruResponse:
+    def __init__(self, body):
+        self.body = body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return None
+
+    async def text(self):
+        return self.body
+
+
+class _StremthruSession:
+    def __init__(self, body):
+        self.body = body
+
+    def get(self, _):
+        return _StremthruResponse(self.body)
 
 
 class IndexerScraperTests(unittest.IsolatedAsyncioTestCase):
@@ -73,3 +96,26 @@ class IndexerScraperTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [torrent["infoHash"] for torrent in torrents], ["first", "second"]
         )
+
+    async def test_stremthru_discards_invalid_magnets_before_filtering(self):
+        xml = """
+        <rss xmlns:torznab="http://torznab.com/schemas/2015/feed">
+          <channel>
+            <item>
+              <title>Invalid Magnet</title>
+              <torznab:attr name="size" value="1000" />
+              <torznab:attr name="infohash" value="1111111111111111111111111111111111111111" />
+            </item>
+            <item>
+              <title>Obsession.2026.1080p.WEB-DL.x264</title>
+              <torznab:attr name="size" value="2000" />
+              <torznab:attr name="infohash" value="2222222222222222222222222222222222222222" />
+            </item>
+          </channel>
+        </rss>
+        """
+        scraper = StremthruScraper(None, _StremthruSession(xml), "https://test")
+
+        torrents = await scraper.scrape(REQUEST)
+
+        self.assertEqual([torrent["infoHash"] for torrent in torrents], ["2" * 40])

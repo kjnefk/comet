@@ -11,10 +11,24 @@ from RTN import (
     sort_torrents,
 )
 
+from comet.core.models import rtn_settings_default
 from comet.services.ranking import rank_worker
 
 
 class RankWorkerTests(unittest.TestCase):
+    def test_comet_fetches_reported_size_but_still_rejects_cam(self):
+        size_fetchable, size_reasons = check_fetch(
+            parse("Obsession.2026.1080p.WEB-DL.4.7GB.x264"), rtn_settings_default
+        )
+        cam_fetchable, cam_reasons = check_fetch(
+            parse("Obsession.2026.1080p.CAM.x264"), rtn_settings_default
+        )
+
+        self.assertTrue(size_fetchable)
+        self.assertEqual(size_reasons, [])
+        self.assertFalse(cam_fetchable)
+        self.assertIn("trash_quality", cam_reasons)
+
     def test_combined_worker_matches_individual_rtn_calls(self):
         titles = [
             "Oppenheimer.2023.2160p.REMUX.DV.HDR10Plus.TrueHD.7.1.HEVC",
