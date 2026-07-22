@@ -16,7 +16,11 @@ from urllib.parse import urlparse
 import aiofiles
 
 from comet.cometnet.crypto import NodeIdentity
-from comet.cometnet.discovery import DiscoveryService, is_valid_peer_address
+from comet.cometnet.discovery import (
+    DiscoveryService,
+    is_valid_peer_address,
+    validate_discovery_configuration,
+)
 from comet.cometnet.gossip import GossipEngine
 from comet.cometnet.interface import CometNetBackend
 from comet.cometnet.keystore import PublicKeyStore
@@ -80,10 +84,14 @@ class CometNetService(CometNetBackend):
     ):
         self.enabled = enabled
         self.listen_port = listen_port
-        self.bootstrap_nodes = bootstrap_nodes or []
-        self.manual_peers = manual_peers or []
-        self.max_peers = max_peers or settings.COMETNET_MAX_PEERS
-        self.min_peers = min_peers or settings.COMETNET_MIN_PEERS
+        (
+            self.manual_peers,
+            self.bootstrap_nodes,
+            self.min_peers,
+            self.max_peers,
+        ) = validate_discovery_configuration(
+            manual_peers, bootstrap_nodes, min_peers, max_peers
+        )
         self.keys_dir = Path(keys_dir) if keys_dir else Path("data/cometnet")
         self.advertise_url = advertise_url
 
