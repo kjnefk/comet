@@ -12,22 +12,33 @@ class NekoBTScraper(BaseScraper):
         super().__init__(manager, session)
 
     def _parse_torrent(self, item: dict) -> dict | None:
-        info_hash = item["infohash"]
-        if not info_hash:
+        if not isinstance(item, dict):
             return None
 
-        title = item["title"] or item["auto_title"]
-        if not title:
+        info_hash = item.get("infohash")
+        title = item.get("title") or item.get("auto_title")
+        magnet = item.get("magnet") or item.get("private_magnet")
+        if (
+            not isinstance(info_hash, str)
+            or not info_hash
+            or not isinstance(title, str)
+            or not title
+            or not isinstance(magnet, str)
+        ):
             return None
 
-        magnet = item["magnet"] or item.get("private_magnet")
+        try:
+            seeders = int(item["seeders"])
+            size = int(item["filesize"])
+        except (KeyError, TypeError, ValueError):
+            return None
 
         return {
             "title": title,
             "infoHash": info_hash,
             "fileIndex": None,
-            "seeders": int(item["seeders"]),
-            "size": int(item["filesize"]),
+            "seeders": seeders,
+            "size": size,
             "tracker": "NekoBT",
             "sources": extract_trackers_from_magnet(magnet),
         }
@@ -41,26 +52,34 @@ class NekoBTScraper(BaseScraper):
         except Exception:
             return [], False, None
 
-        if payload["error"]:
+        if not isinstance(payload, dict) or payload.get("error"):
             return [], False, None
 
-        data = payload["data"]
+        data = payload.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+            return [], False, None
         results = data["results"]
 
         recommended = data.get("recommended_media")
         similar = data.get("similar_media")
-        media_id = (
-            recommended["id"]
-            if recommended
-            else (similar[0]["id"] if similar else None)
-        )
+        media_id = None
+        if isinstance(recommended, dict) and isinstance(recommended.get("id"), str):
+            media_id = recommended["id"]
+        elif (
+            isinstance(similar, list)
+            and similar
+            and isinstance(similar[0], dict)
+            and isinstance(similar[0].get("id"), str)
+        ):
+            media_id = similar[0]["id"]
 
         torrents = []
         for item in results:
             if t := self._parse_torrent(item):
                 torrents.append(t)
 
-        return torrents, data["more"], media_id
+        more = data.get("more")
+        return torrents, more if isinstance(more, bool) else False, media_id
 
     async def _fetch_all(self, base_params: dict) -> tuple[list[dict], str | None]:
         params = {**base_params, "limit": PAGE_LIMIT, "offset": 0}

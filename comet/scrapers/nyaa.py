@@ -1,4 +1,5 @@
 import asyncio
+import html
 import re
 
 from comet.core.logger import log_scraper_error, logger
@@ -16,38 +17,37 @@ SEEDERS_PATTERN = re.compile(
 )
 TITLE_PATTERN = re.compile(r'href="/view/\d+" title="([^"]+)"')
 INFO_HASH_PATTERN = re.compile(r"btih:([a-fA-F0-9]{40}|[a-zA-Z0-9]{32})")
+ROW_PATTERN = re.compile(r"<tr(?:\s[^>]*)?>.*?</tr>", re.IGNORECASE | re.DOTALL)
 
 NYAA_BASE_URL = "https://nyaa.si"
 
 
 def extract_torrent_data(html_content: str):
     torrents = []
+    for row in ROW_PATTERN.findall(html_content):
+        magnet_match = MAGNET_PATTERN.search(row)
+        size_match = SIZE_PATTERN.search(row)
+        seeders_match = SEEDERS_PATTERN.search(row)
+        title_match = TITLE_PATTERN.search(row)
+        if not magnet_match or not size_match or not seeders_match or not title_match:
+            continue
 
-    magnet_links = MAGNET_PATTERN.findall(html_content)
-
-    sizes = SIZE_PATTERN.findall(html_content)
-
-    seeders_data = SEEDERS_PATTERN.findall(html_content)
-    seeders = [int(match[0]) for match in seeders_data]
-
-    titles = TITLE_PATTERN.findall(html_content)
-
-    for i in range(len(magnet_links)):
-        magnet = magnet_links[i]
-        info_hash = INFO_HASH_PATTERN.search(magnet).group(1)
-
-        size_str = sizes[i]
+        magnet = html.unescape(magnet_match.group(1))
+        info_hash_match = INFO_HASH_PATTERN.search(magnet)
+        if not info_hash_match:
+            continue
         try:
-            size_bytes = size_to_bytes(size_str.replace("iB", "B"))
-        except Exception:
-            size_bytes = None
+            size_bytes = size_to_bytes(size_match.group(1).replace("iB", "B"))
+            seeders = int(seeders_match.group(1))
+        except (TypeError, ValueError):
+            continue
 
         torrents.append(
             {
-                "title": titles[i],
-                "infoHash": info_hash,
+                "title": html.unescape(title_match.group(1)),
+                "infoHash": info_hash_match.group(1),
                 "fileIndex": None,
-                "seeders": seeders[i],
+                "seeders": seeders,
                 "size": size_bytes,
                 "tracker": "Nyaa",
                 "sources": extract_trackers_from_magnet(magnet),
