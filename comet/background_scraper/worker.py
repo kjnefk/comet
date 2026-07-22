@@ -1471,46 +1471,47 @@ class BackgroundScraperWorker:
         )
 
     async def requeue_dead_items(self):
-        dead_items = int(
-            await database.fetch_val(
-                """
-                SELECT COUNT(*) FROM background_scraper_items
-                WHERE status = 'dead'
-                """
-            )
-        )
-        dead_episodes = int(
-            await database.fetch_val(
-                """
-                SELECT COUNT(*) FROM background_scraper_episodes
-                WHERE status = 'dead'
-                """
-            )
-        )
-
         now = time.time()
-        await database.execute(
-            """
-            UPDATE background_scraper_items
-            SET status = 'discovered',
-                consecutive_failures = 0,
-                next_retry_at = :next_retry_at,
-                updated_at = :updated_at
-            WHERE status = 'dead'
-            """,
-            {"next_retry_at": now, "updated_at": now},
-        )
-        await database.execute(
-            """
-            UPDATE background_scraper_episodes
-            SET status = 'discovered',
-                consecutive_failures = 0,
-                next_retry_at = :next_retry_at,
-                updated_at = :updated_at
-            WHERE status = 'dead'
-            """,
-            {"next_retry_at": now, "updated_at": now},
-        )
+        async with database.transaction():
+            dead_items = int(
+                await database.fetch_val(
+                    """
+                    SELECT COUNT(*) FROM background_scraper_items
+                    WHERE status = 'dead'
+                    """
+                )
+            )
+            dead_episodes = int(
+                await database.fetch_val(
+                    """
+                    SELECT COUNT(*) FROM background_scraper_episodes
+                    WHERE status = 'dead'
+                    """
+                )
+            )
+
+            await database.execute(
+                """
+                UPDATE background_scraper_items
+                SET status = 'discovered',
+                    consecutive_failures = 0,
+                    next_retry_at = :next_retry_at,
+                    updated_at = :updated_at
+                WHERE status = 'dead'
+                """,
+                {"next_retry_at": now, "updated_at": now},
+            )
+            await database.execute(
+                """
+                UPDATE background_scraper_episodes
+                SET status = 'discovered',
+                    consecutive_failures = 0,
+                    next_retry_at = :next_retry_at,
+                    updated_at = :updated_at
+                WHERE status = 'dead'
+                """,
+                {"next_retry_at": now, "updated_at": now},
+            )
 
         return {"items": dead_items, "episodes": dead_episodes}
 

@@ -73,5 +73,39 @@ class BackgroundWorkerLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(worker.is_running)
 
 
+class BackgroundWorkerQueryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_requeue_dead_items_rolls_back_both_tables_on_failure(self):
+        worker = BackgroundScraperWorker()
+
+        class Transaction:
+            def __init__(self):
+                self.exit_error = None
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, error_type, error, traceback):
+                self.exit_error = error
+
+        transaction = Transaction()
+        fetch_val = AsyncMock(side_effect=[2, 3])
+        execute = AsyncMock(side_effect=[None, RuntimeError("episode update failed")])
+
+        with (
+            patch(
+                "comet.background_scraper.worker.database.transaction",
+                return_value=transaction,
+            ),
+            patch("comet.background_scraper.worker.database.fetch_val", fetch_val),
+            patch("comet.background_scraper.worker.database.execute", execute),
+            self.assertRaisesRegex(RuntimeError, "episode update failed"),
+        ):
+            await worker.requeue_dead_items()
+
+        self.assertIsInstance(transaction.exit_error, RuntimeError)
+        self.assertEqual(fetch_val.await_count, 2)
+        self.assertEqual(execute.await_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
