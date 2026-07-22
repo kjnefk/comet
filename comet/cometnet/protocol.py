@@ -8,7 +8,7 @@ Uses MsgPack for efficient binary serialization.
 import math
 import time
 from enum import Enum
-from typing import List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
 import msgpack
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -18,6 +18,22 @@ from comet.utils.formatting import normalize_info_hash
 
 # Protocol version for backwards compatibility
 PROTOCOL_VERSION = "1.0"
+
+
+def _validate_current_pool_id(value: object) -> str:
+    if type(value) is not str or value != value.strip().lower():
+        raise ValueError("pool_id must use its canonical lowercase form")
+    if not 2 <= len(value) <= 64:
+        raise ValueError("pool_id must be 2-64 characters")
+    if not value.replace("-", "").replace("_", "").isalnum():
+        raise ValueError("pool_id must be alphanumeric with - or _")
+    return value
+
+
+def _validate_non_empty_string(value: object, field_name: str) -> str:
+    if type(value) is not str or not value:
+        raise ValueError(f"{field_name} must be a non-empty string")
+    return value
 
 
 class MessageType(str, Enum):
@@ -330,6 +346,39 @@ class TorrentResponse(BaseMessage):
 # ==================== Pool Messages ====================
 
 
+class PoolMemberPayload(BaseModel):
+    """Exact member representation carried by a pool manifest message."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    public_key: str
+    role: Literal["creator", "admin", "member"] = "member"
+    added_at: float
+    added_by: str
+    alias: Optional[str] = None
+    contribution_count: int = 0
+    last_seen: float = 0.0
+
+    @field_validator("public_key", "added_by", mode="before")
+    @classmethod
+    def validate_keys(cls, value, info):
+        return _validate_non_empty_string(value, info.field_name)
+
+    @field_validator("added_at", "last_seen", mode="before")
+    @classmethod
+    def validate_timestamps(cls, value, info):
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise ValueError(f"{info.field_name} must be a finite non-negative number")
+        return value
+
+    @field_validator("contribution_count", mode="before")
+    @classmethod
+    def validate_contribution_count(cls, value):
+        if type(value) is not int or value < 0:
+            raise ValueError("contribution_count must be a non-negative integer")
+        return value
+
+
 class PoolManifestMessage(BaseMessage):
     """
     Broadcast or update a pool manifest.
@@ -342,12 +391,35 @@ class PoolManifestMessage(BaseMessage):
     display_name: str
     description: str = ""
     creator_key: str
-    members: List[dict] = Field(default_factory=list)  # Serialized PoolMembers
-    join_mode: str = "invite"
+    members: List[PoolMemberPayload] = Field(default_factory=list)
+    join_mode: Literal["invite"] = "invite"
     manifest_version: int = 1
     created_at: float = 0.0  # Creation timestamp
     updated_at: float = 0.0  # Last update timestamp
     manifest_signatures: dict = Field(default_factory=dict)  # admin_key -> sig
+
+    @field_validator("pool_id", mode="before")
+    @classmethod
+    def validate_pool_id(cls, value):
+        return _validate_current_pool_id(value)
+
+    @field_validator("display_name", "creator_key", mode="before")
+    @classmethod
+    def validate_required_strings(cls, value, info):
+        return _validate_non_empty_string(value, info.field_name)
+
+    @field_validator("manifest_signatures", mode="before")
+    @classmethod
+    def validate_manifest_signatures(cls, value):
+        if type(value) is not dict or any(
+            type(key) is not str
+            or not key
+            or type(signature) is not str
+            or not signature
+            for key, signature in value.items()
+        ):
+            raise ValueError("manifest_signatures must map non-empty strings")
+        return value
 
     @field_validator("manifest_version", mode="before")
     @classmethod
@@ -371,8 +443,20 @@ class PoolJoinRequest(BaseMessage):
     pool_id: str
     invite_code: Optional[str] = None  # For invite-based join
 
-    requester_key: str = ""
+    requester_key: str
     alias: Optional[str] = None  # Friendly name of the requester
+
+    @field_validator("pool_id", mode="before")
+    @classmethod
+    def validate_pool_id(cls, value):
+        return _validate_current_pool_id(value)
+
+    @field_validator("invite_code", "requester_key", mode="before")
+    @classmethod
+    def validate_join_fields(cls, value, info):
+        if value is None and info.field_name == "invite_code":
+            return value
+        return _validate_non_empty_string(value, info.field_name)
 
 
 class PoolMemberUpdate(BaseMessage):
@@ -380,13 +464,36 @@ class PoolMemberUpdate(BaseMessage):
 
     type: Literal[MessageType.POOL_MEMBER_UPDATE] = MessageType.POOL_MEMBER_UPDATE
     pool_id: str
-    action: str  # "add", "remove", "promote", "demote"
+    action: Literal["add", "remove", "promote", "demote", "leave"]
     member_key: str
-    new_role: Optional[str] = None
-    updated_by: str = ""  # Admin who made the change
-    manifest_signatures: dict = Field(
+    new_role: Optional[Literal["admin", "member"]] = None
+    updated_by: str  # Admin who made the change
+    manifest_signatures: Dict[str, str] = Field(
         default_factory=dict
     )  # Signatures of the NEW manifest state
+
+    @field_validator("pool_id", mode="before")
+    @classmethod
+    def validate_pool_id(cls, value):
+        return _validate_current_pool_id(value)
+
+    @field_validator("member_key", "updated_by", mode="before")
+    @classmethod
+    def validate_member_keys(cls, value, info):
+        return _validate_non_empty_string(value, info.field_name)
+
+    @field_validator("manifest_signatures", mode="before")
+    @classmethod
+    def validate_manifest_signatures(cls, value):
+        if type(value) is not dict or any(
+            type(key) is not str
+            or not key
+            or type(signature) is not str
+            or not signature
+            for key, signature in value.items()
+        ):
+            raise ValueError("manifest_signatures must map non-empty strings")
+        return value
 
 
 class PoolDeleteMessage(BaseMessage):
@@ -394,7 +501,17 @@ class PoolDeleteMessage(BaseMessage):
 
     type: Literal[MessageType.POOL_DELETE] = MessageType.POOL_DELETE
     pool_id: str
-    deleted_by: str = ""  # Public key of the creator who deleted it
+    deleted_by: str  # Public key of the creator who deleted it
+
+    @field_validator("pool_id", mode="before")
+    @classmethod
+    def validate_pool_id(cls, value):
+        return _validate_current_pool_id(value)
+
+    @field_validator("deleted_by", mode="before")
+    @classmethod
+    def validate_deleted_by(cls, value):
+        return _validate_non_empty_string(value, "deleted_by")
 
 
 # Union type for all possible message types

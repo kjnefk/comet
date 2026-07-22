@@ -934,12 +934,13 @@ class CometNetService(CometNetBackend):
         try:
             members = [
                 PoolMember(
-                    public_key=m.get("public_key", ""),
-                    role=MemberRole(m.get("role", "member")),
-                    added_at=m.get("added_at", 0),
-                    added_by=m.get("added_by", ""),
-                    contribution_count=m.get("contribution_count", 0),
-                    last_seen=m.get("last_seen", 0.0),
+                    public_key=m.public_key,
+                    role=MemberRole(m.role),
+                    added_at=m.added_at,
+                    added_by=m.added_by,
+                    alias=m.alias,
+                    contribution_count=m.contribution_count,
+                    last_seen=m.last_seen,
                 )
                 for m in message.members
             ]
@@ -1306,7 +1307,7 @@ class CometNetService(CometNetBackend):
             display_name=manifest.display_name,
             description=manifest.description,
             creator_key=manifest.creator_key,
-            members=[m.model_dump() for m in manifest.members],
+            members=[m.model_dump(exclude={"node_id"}) for m in manifest.members],
             join_mode=manifest.join_mode.value,
             manifest_version=manifest.version,
             created_at=manifest.created_at,
@@ -1326,7 +1327,7 @@ class CometNetService(CometNetBackend):
             display_name=manifest.display_name,
             description=manifest.description,
             creator_key=manifest.creator_key,
-            members=[m.model_dump() for m in manifest.members],
+            members=[m.model_dump(exclude={"node_id"}) for m in manifest.members],
             join_mode=manifest.join_mode.value,
             manifest_version=manifest.version,
             created_at=manifest.created_at,

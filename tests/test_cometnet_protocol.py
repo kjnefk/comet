@@ -8,6 +8,7 @@ from comet.cometnet.protocol import (
     HandshakeMessage,
     MessageType,
     PeerRequest,
+    PoolMemberUpdate,
     PoolManifestMessage,
     TorrentAnnounce,
     TorrentQuery,
@@ -74,3 +75,40 @@ class CometNetProtocolTests(unittest.TestCase):
         payload["version"] = "2.0"
 
         self.assertIsNone(parse_message(self._pack(payload)))
+
+    def test_pool_messages_require_current_content_schema(self):
+        manifest = PoolManifestMessage(
+            pool_id="pool-a",
+            display_name="Pool A",
+            creator_key="creator",
+        ).model_dump()
+        update = PoolMemberUpdate(
+            pool_id="pool-a",
+            action="add",
+            member_key="member",
+            updated_by="creator",
+        ).model_dump()
+        invalid_messages = [
+            manifest | {"pool_id": " Pool-A "},
+            manifest | {"members": [{"public_key": "member"}]},
+            manifest
+            | {
+                "members": [
+                    {
+                        "public_key": "member",
+                        "role": "member",
+                        "added_at": 1.0,
+                        "added_by": "creator",
+                        "node_id": "not-on-wire",
+                    }
+                ]
+            },
+            manifest | {"manifest_signatures": {"creator": 123}},
+            update | {"action": "ban"},
+            update | {"new_role": "creator"},
+            update | {"updated_by": ""},
+        ]
+
+        for payload in invalid_messages:
+            with self.subTest(payload=payload):
+                self.assertIsNone(parse_message(self._pack(payload)))
