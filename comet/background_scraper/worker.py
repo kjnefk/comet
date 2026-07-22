@@ -97,61 +97,64 @@ class BackgroundScraperWorker:
     async def _fetch_queue_snapshot(self, now: float | None = None):
         current_now, query_context = self._queue_query_context(now=now)
 
-        item_snapshot = await database.fetch_one(
+        queue_snapshot = await database.fetch_one(
             """
-            SELECT
-                COALESCE(SUM(CASE WHEN media_type = 'movie' THEN 1 ELSE 0 END), 0) AS movie_count,
-                COALESCE(SUM(CASE WHEN media_type = 'series' THEN 1 ELSE 0 END), 0) AS series_count,
-                MIN(created_at) AS oldest_item_ts
-            FROM background_scraper_items
-            WHERE (next_retry_at IS NULL OR next_retry_at <= :now)
-              AND (last_success_at IS NULL OR last_success_at <= :success_cutoff)
-              AND (status != 'dead' OR consecutive_failures < :max_retries)
+            WITH item_snapshot AS (
+                SELECT
+                    COALESCE(SUM(CASE WHEN media_type = 'movie' THEN 1 ELSE 0 END), 0) AS movie_count,
+                    COALESCE(SUM(CASE WHEN media_type = 'series' THEN 1 ELSE 0 END), 0) AS series_count,
+                    MIN(created_at) AS oldest_item_ts
+                FROM background_scraper_items
+                WHERE (next_retry_at IS NULL OR next_retry_at <= :now)
+                  AND (last_success_at IS NULL OR last_success_at <= :success_cutoff)
+                  AND (status != 'dead' OR consecutive_failures < :max_retries)
+            ),
+            episode_snapshot AS (
+                SELECT
+                    COUNT(*) AS episode_count,
+                    MIN(background_scraper_episodes.created_at) AS oldest_episode_ts
+                FROM background_scraper_episodes
+                JOIN background_scraper_items
+                  ON background_scraper_items.media_id = background_scraper_episodes.series_id
+                 AND background_scraper_items.media_type = 'series'
+                WHERE background_scraper_episodes.season >= 1
+                  AND background_scraper_episodes.episode >= 1
+                  AND (
+                        background_scraper_episodes.next_retry_at IS NULL
+                        OR background_scraper_episodes.next_retry_at <= :now
+                      )
+                  AND (
+                        background_scraper_episodes.last_success_at IS NULL
+                        OR background_scraper_episodes.last_success_at <= :success_cutoff
+                      )
+                  AND (
+                        background_scraper_episodes.status != 'dead'
+                        OR background_scraper_episodes.consecutive_failures < :max_retries
+                      )
+                  AND (
+                        background_scraper_items.next_retry_at IS NULL
+                        OR background_scraper_items.next_retry_at <= :now
+                      )
+                  AND (
+                        background_scraper_items.last_success_at IS NULL
+                        OR background_scraper_items.last_success_at <= :success_cutoff
+                      )
+                  AND (
+                        background_scraper_items.status != 'dead'
+                        OR background_scraper_items.consecutive_failures < :max_retries
+                      )
+            )
+            SELECT item_snapshot.*, episode_snapshot.*
+            FROM item_snapshot
+            CROSS JOIN episode_snapshot
             """,
             query_context,
-        )
-        episode_snapshot = await database.fetch_one(
-            """
-            SELECT
-                COUNT(*) AS episode_count,
-                MIN(background_scraper_episodes.created_at) AS oldest_episode_ts
-            FROM background_scraper_episodes
-            JOIN background_scraper_items
-              ON background_scraper_items.media_id = background_scraper_episodes.series_id
-             AND background_scraper_items.media_type = 'series'
-            WHERE background_scraper_episodes.season >= 1
-              AND background_scraper_episodes.episode >= 1
-              AND (
-                    background_scraper_episodes.next_retry_at IS NULL
-                    OR background_scraper_episodes.next_retry_at <= :now
-                  )
-              AND (
-                    background_scraper_episodes.last_success_at IS NULL
-                    OR background_scraper_episodes.last_success_at <= :success_cutoff
-                  )
-              AND (
-                    background_scraper_episodes.status != 'dead'
-                    OR background_scraper_episodes.consecutive_failures < :max_retries
-                  )
-              AND (
-                    background_scraper_items.next_retry_at IS NULL
-                    OR background_scraper_items.next_retry_at <= :now
-                  )
-              AND (
-                    background_scraper_items.last_success_at IS NULL
-                    OR background_scraper_items.last_success_at <= :success_cutoff
-                  )
-              AND (
-                    background_scraper_items.status != 'dead'
-                    OR background_scraper_items.consecutive_failures < :max_retries
-                  )
-            """,
-            query_context,
+            force_primary=True,
         )
 
-        oldest_item_ts = item_snapshot["oldest_item_ts"] if item_snapshot else None
+        oldest_item_ts = queue_snapshot["oldest_item_ts"] if queue_snapshot else None
         oldest_episode_ts = (
-            episode_snapshot["oldest_episode_ts"] if episode_snapshot else None
+            queue_snapshot["oldest_episode_ts"] if queue_snapshot else None
         )
         candidate_timestamps = [
             ts for ts in (oldest_item_ts, oldest_episode_ts) if ts is not None
@@ -161,10 +164,10 @@ class BackgroundScraperWorker:
             if candidate_timestamps
             else 0.0
         )
-        queue_movies = int(item_snapshot["movie_count"] or 0) if item_snapshot else 0
-        queue_series = int(item_snapshot["series_count"] or 0) if item_snapshot else 0
+        queue_movies = int(queue_snapshot["movie_count"] or 0) if queue_snapshot else 0
+        queue_series = int(queue_snapshot["series_count"] or 0) if queue_snapshot else 0
         queue_episodes = (
-            int(episode_snapshot["episode_count"] or 0) if episode_snapshot else 0
+            int(queue_snapshot["episode_count"] or 0) if queue_snapshot else 0
         )
         total_queue = queue_movies + queue_series + queue_episodes
 

@@ -74,6 +74,35 @@ class BackgroundWorkerLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BackgroundWorkerQueryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_queue_snapshot_uses_one_primary_database_snapshot(self):
+        worker = BackgroundScraperWorker()
+        fetch_one = AsyncMock(
+            return_value={
+                "movie_count": 2,
+                "series_count": 3,
+                "oldest_item_ts": 90.0,
+                "episode_count": 5,
+                "oldest_episode_ts": 80.0,
+            }
+        )
+
+        with patch("comet.background_scraper.worker.database.fetch_one", fetch_one):
+            snapshot = await worker._fetch_queue_snapshot(now=100.0)
+
+        self.assertEqual(
+            snapshot,
+            {
+                "movies": 2,
+                "series": 3,
+                "episodes": 5,
+                "total": 10,
+                "oldest_age_s": 20.0,
+            },
+        )
+        fetch_one.assert_awaited_once()
+        self.assertTrue(fetch_one.await_args.kwargs["force_primary"])
+        self.assertIn("CROSS JOIN episode_snapshot", fetch_one.await_args.args[0])
+
     async def test_requeue_dead_items_rolls_back_both_tables_on_failure(self):
         worker = BackgroundScraperWorker()
 
