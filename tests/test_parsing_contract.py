@@ -5,7 +5,9 @@ from comet.utils.parsing import parse_media_id, parse_optional_int
 
 class MediaIdContractTests(unittest.TestCase):
     def test_current_imdb_and_kitsu_shapes(self):
-        self.assertEqual(parse_media_id("movie", "tt1234567"), ("tt1234567", None, None))
+        self.assertEqual(
+            parse_media_id("movie", "tt1234567"), ("tt1234567", None, None)
+        )
         self.assertEqual(
             parse_media_id("series", "tt1234567:0:2"),
             ("tt1234567", 0, 2),

@@ -7,9 +7,11 @@ from fastapi.templating import Jinja2Templates
 from comet.core.config_validation import config_check
 from comet.core.models import settings, web_config
 from comet.utils.cache import CachePolicies
-from comet.utils.signed_session import (derive_session_secret,
-                                        encode_signed_session,
-                                        verify_signed_session)
+from comet.utils.signed_session import (
+    derive_session_secret,
+    encode_signed_session,
+    verify_signed_session,
+)
 
 router = APIRouter()
 templates = Jinja2Templates("comet/templates")

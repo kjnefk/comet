@@ -50,8 +50,9 @@ class SignedSessionContractTests(unittest.TestCase):
                 encode_signed_session(self.secret, ttl)
 
         for password, scope in (("", "scope"), (None, "scope"), ("password", "")):
-            with self.subTest(password=password, scope=scope), self.assertRaises(
-                ValueError
+            with (
+                self.subTest(password=password, scope=scope),
+                self.assertRaises(ValueError),
             ):
                 derive_session_secret(password, scope)
 

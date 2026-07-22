@@ -55,9 +55,7 @@ def _extract_b64config_from_manifest_url(manifest_url: str, expected_base_url: s
     ):
         raise ValueError("Manifest URL does not match this Comet instance")
 
-    path_segments = [
-        segment for segment in parsed.path.split("/") if segment
-    ]
+    path_segments = [segment for segment in parsed.path.split("/") if segment]
 
     if not path_segments or path_segments[-1] != "manifest.json":
         raise ValueError("Invalid manifest URL format")

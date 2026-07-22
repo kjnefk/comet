@@ -12,9 +12,11 @@ from comet.core.logger import log_capture, logger
 from comet.core.models import database, settings
 from comet.services.bandwidth import bandwidth_monitor
 from comet.utils.formatting import format_bytes
-from comet.utils.signed_session import (derive_session_secret,
-                                        encode_signed_session,
-                                        verify_signed_session)
+from comet.utils.signed_session import (
+    derive_session_secret,
+    encode_signed_session,
+    verify_signed_session,
+)
 from comet.utils.update import UpdateManager
 
 router = APIRouter()

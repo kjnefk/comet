@@ -51,9 +51,7 @@ def resolve_status_video_path(
     status_keys: Iterable[str | None],
     default_key: str = DEFAULT_STATUS_KEY,
 ) -> str | None:
-    status_video_index = _build_status_video_index(
-        _status_video_directory_revision()
-    )
+    status_video_index = _build_status_video_index(_status_video_directory_revision())
 
     for key in _iter_normalized_keys(status_keys):
         video_path = status_video_index.get(key)

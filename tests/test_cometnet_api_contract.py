@@ -23,7 +23,10 @@ from comet.cometnet.standalone import (
 class CometNetRequestSchemaTests(unittest.TestCase):
     def test_admin_models_forbid_legacy_fields_and_type_coercion(self):
         invalid_cases = (
-            (UiCreatePoolRequest, {"pool_id": "pool", "display_name": "Pool", "old": 1}),
+            (
+                UiCreatePoolRequest,
+                {"pool_id": "pool", "display_name": "Pool", "old": 1},
+            ),
             (UiCreateInviteRequest, {"max_uses": "2"}),
             (UiJoinPoolRequest, {"invite_code": None}),
         )

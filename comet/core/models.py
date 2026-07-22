@@ -469,9 +469,7 @@ class AppSettings(BaseSettings):
     @field_validator(*_NONNEGATIVE_HTTP_OPERATION_FIELDS)
     def validate_nonnegative_http_operation_value(cls, value):
         if value is None or not math.isfinite(value) or value < 0:
-            raise ValueError(
-                "HTTP operational values must be finite and non-negative"
-            )
+            raise ValueError("HTTP operational values must be finite and non-negative")
         return value
 
     @field_validator(*_POSITIVE_HTTP_OPERATION_FIELDS)

@@ -41,8 +41,7 @@ from comet.core.database import setup_database, teardown_database
 from comet.core.execution import setup_executor, shutdown_executor
 from comet.core.logger import logger
 from comet.core.models import settings
-from comet.services.torrent_manager import (check_torrents_exist,
-                                            torrent_update_queue)
+from comet.services.torrent_manager import check_torrents_exist, torrent_update_queue
 
 
 class StrictRequest(BaseModel):

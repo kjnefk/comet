@@ -136,9 +136,7 @@ class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
                         action="remove",
                         member_key="leaving-key",
                         updated_by="local-key",
-                        manifest_signatures={
-                            "local-key": "new-state-signature"
-                        },
+                        manifest_signatures={"local-key": "new-state-signature"},
                         exclude={"leaving-node"},
                     )
                 else:

@@ -126,7 +126,9 @@ async def create_pool(
     except ValueError as error:
         raise HTTPException(status_code=400, detail="Invalid pool request") from error
     except PermissionError as error:
-        raise HTTPException(status_code=403, detail="Pool operation is forbidden") from error
+        raise HTTPException(
+            status_code=403, detail="Pool operation is forbidden"
+        ) from error
 
 
 @router.delete(
@@ -299,7 +301,9 @@ async def update_member_role(
             return {"status": "success"}
         raise HTTPException(status_code=400, detail="Failed to update role")
     except PermissionError as error:
-        raise HTTPException(status_code=403, detail="Pool operation is forbidden") from error
+        raise HTTPException(
+            status_code=403, detail="Pool operation is forbidden"
+        ) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail="Invalid pool request") from error
 
@@ -321,6 +325,8 @@ async def leave_pool(
             status_code=400, detail="Failed to leave pool (not a member?)"
         )
     except PermissionError as error:
-        raise HTTPException(status_code=403, detail="Pool operation is forbidden") from error
+        raise HTTPException(
+            status_code=403, detail="Pool operation is forbidden"
+        ) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail="Invalid pool request") from error

@@ -1,10 +1,14 @@
 import asyncio
 import time
 
-from comet.core.database import (build_distinct_from_predicate,
-                                 build_json_list_membership_predicate,
-                                 build_scope_lookup_params, build_scope_params,
-                                 build_upsert_assignments, encode_json_param)
+from comet.core.database import (
+    build_distinct_from_predicate,
+    build_json_list_membership_predicate,
+    build_scope_lookup_params,
+    build_scope_params,
+    build_upsert_assignments,
+    encode_json_param,
+)
 from comet.core.models import database, settings
 from comet.core.logger import logger
 from comet.utils.parsing import default_dump

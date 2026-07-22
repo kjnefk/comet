@@ -5,8 +5,7 @@ import time
 
 from loguru import logger
 
-from comet.core.log_levels import (CUSTOM_LOG_LEVELS, STANDARD_LOG_LEVELS,
-                                   get_level_info)
+from comet.core.log_levels import CUSTOM_LOG_LEVELS, STANDARD_LOG_LEVELS, get_level_info
 from comet.utils.parsing import associate_urls_credentials
 
 logging.getLogger("demagnetize").setLevel(

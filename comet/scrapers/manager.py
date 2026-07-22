@@ -11,9 +11,11 @@ from comet.scrapers.base import BaseScraper
 from comet.scrapers.models import ScrapeRequest
 from comet.services.anime import anime_mapper
 from comet.utils.network_manager import network_manager
-from comet.utils.parsing import (associate_urls_credentials,
-                                 parse_url_scrape_mode,
-                                 url_mode_matches_context)
+from comet.utils.parsing import (
+    associate_urls_credentials,
+    parse_url_scrape_mode,
+    url_mode_matches_context,
+)
 
 ANIME_ONLY_SETTING_BY_SCRAPER = {
     "NyaaScraper": "NYAA_ANIME_ONLY",

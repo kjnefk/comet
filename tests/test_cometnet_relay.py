@@ -57,7 +57,9 @@ class CometNetRelayTests(unittest.IsolatedAsyncioTestCase):
         ):
             await relay._pool_request("POST", "/pools", {})
 
-        rendered = " ".join(str(value) for call in warning.call_args_list for value in call.args)
+        rendered = " ".join(
+            str(value) for call in warning.call_args_list for value in call.args
+        )
         self.assertNotIn("password", rendered)
         self.assertNotIn("secret credential", rendered)
 

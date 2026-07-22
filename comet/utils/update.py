@@ -208,7 +208,9 @@ class UpdateManager:
                 "GitHub commit response has an invalid commit date"
             ) from error
         if parsed_date.tzinfo is None:
-            raise ValueError("GitHub commit response commit date must include a timezone")
+            raise ValueError(
+                "GitHub commit response commit date must include a timezone"
+            )
 
         return sha, html_url, commit_date
 

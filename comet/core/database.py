@@ -15,10 +15,8 @@ import orjson
 
 import comet.core.models as _models_mod
 from comet.core.logger import logger
-from comet.core.models import (IS_POSTGRES, IS_SQLITE, JSON_FUNC, database,
-                               settings)
-from comet.core.schema_migrations import (NULL_SCOPE_SENTINEL,
-                                          run_schema_migrations)
+from comet.core.models import IS_POSTGRES, IS_SQLITE, JSON_FUNC, database, settings
+from comet.core.schema_migrations import NULL_SCOPE_SENTINEL, run_schema_migrations
 
 __all__ = [
     "DOWNLOAD_LINK_CACHE_TTL",

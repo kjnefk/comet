@@ -23,7 +23,7 @@ class HttpCacheContractTests(unittest.TestCase):
             '"current",',
             '*, "current"',
             '"current" garbage',
-            'W/ current',
+            "W/ current",
         )
 
         for value in malformed_values:

@@ -9,10 +9,19 @@ import xbmcgui
 import xbmcplugin
 
 from .parser import parse_stream_info
-from .utils import (ADDON_HANDLE, ADDON_ID, build_url,
-                    convert_info_hash_to_magnet, ensure_configured, fetch_data,
-                    get_base_url, get_catalog_provider_url, get_config_prefix,
-                    is_elementum_installed_and_enabled, log)
+from .utils import (
+    ADDON_HANDLE,
+    ADDON_ID,
+    build_url,
+    convert_info_hash_to_magnet,
+    ensure_configured,
+    fetch_data,
+    get_base_url,
+    get_catalog_provider_url,
+    get_config_prefix,
+    is_elementum_installed_and_enabled,
+    log,
+)
 
 CATALOG_PAGE_SIZE = 25
 SUPPORTED_CATALOG_TYPES = {"movie", "series"}

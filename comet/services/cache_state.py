@@ -4,8 +4,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
-from comet.core.database import (build_json_list_membership_predicate,
-                                 database, encode_json_param, fetch_flag)
+from comet.core.database import (
+    build_json_list_membership_predicate,
+    database,
+    encode_json_param,
+    fetch_flag,
+)
 from comet.core.logger import logger
 from comet.core.models import settings
 from comet.services.lock import DistributedLock
