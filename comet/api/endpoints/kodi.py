@@ -8,9 +8,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from comet.core.models import ConfigModel, settings
-from comet.services.kodi_pairing import (associate_setup_code_with_b64config,
-                                         consume_b64config_for_setup_code,
-                                         create_setup_code)
+from comet.services.kodi_pairing import (
+    associate_setup_code_with_b64config,
+    consume_b64config_for_setup_code,
+    create_setup_code,
+)
 from comet.utils.cache import NO_CACHE_HEADERS
 
 router = APIRouter()
@@ -21,7 +23,7 @@ class GenerateSetupCodeRequest(BaseModel):
 
 
 class AssociateManifestRequest(BaseModel):
-    code: str = Field(min_length=6, max_length=16)
+    code: str = Field(pattern=r"^[0-9a-f]{8}$")
     manifest_url: str
 
 
@@ -131,7 +133,12 @@ async def associate_manifest(payload: AssociateManifestRequest):
     description="Returns the Comet configuration for a setup code.",
 )
 async def get_manifest(code: str):
-    b64config = await consume_b64config_for_setup_code(code)
+    try:
+        b64config = await consume_b64config_for_setup_code(code)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404, detail="Manifest not ready or setup code expired"
+        ) from exc
     if b64config is None:
         raise HTTPException(
             status_code=404, detail="Manifest not ready or setup code expired"
