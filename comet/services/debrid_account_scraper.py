@@ -2,9 +2,12 @@ import asyncio
 import time
 from datetime import datetime
 
-from comet.core.database import (_debrid_account_snapshot_ttl,
-                                 build_json_list_membership_predicate,
-                                 database, encode_json_param)
+from comet.core.database import (
+    _debrid_account_snapshot_ttl,
+    build_json_list_membership_predicate,
+    database,
+    encode_json_param,
+)
 from comet.core.execution import get_executor
 from comet.core.logger import logger
 from comet.core.models import settings
@@ -172,6 +175,30 @@ async def _set_last_sync(service: str, account_key_hash: str, last_sync: float):
     )
 
 
+async def _replace_account_snapshot(
+    service: str,
+    account_key_hash: str,
+    synced_at: float,
+    rows: list[dict],
+) -> None:
+    async with database.transaction():
+        await _upsert_snapshot_rows(rows)
+        await database.execute(
+            """
+            DELETE FROM debrid_account_magnets
+            WHERE debrid_service = :debrid_service
+              AND account_key_hash = :account_key_hash
+              AND synced_at < :synced_at
+            """,
+            {
+                "debrid_service": service,
+                "account_key_hash": account_key_hash,
+                "synced_at": synced_at,
+            },
+        )
+        await _set_last_sync(service, account_key_hash, synced_at)
+
+
 async def _sync_single_account(
     session,
     service: str,
@@ -208,23 +235,7 @@ async def _sync_single_account(
             }
         )
 
-    await _upsert_snapshot_rows(rows)
-
-    await database.execute(
-        """
-        DELETE FROM debrid_account_magnets
-        WHERE debrid_service = :debrid_service
-          AND account_key_hash = :account_key_hash
-          AND synced_at < :synced_at
-        """,
-        {
-            "debrid_service": service,
-            "account_key_hash": account_key_hash,
-            "synced_at": synced_at,
-        },
-    )
-
-    await _set_last_sync(service, account_key_hash, synced_at)
+    await _replace_account_snapshot(service, account_key_hash, synced_at, rows)
 
     logger.log(
         "SCRAPER",
