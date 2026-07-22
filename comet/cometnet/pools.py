@@ -398,9 +398,7 @@ class PoolStore:
         # Sign and store
         await self.store_manifest(manifest, identity)
 
-        # Auto-join as member
-        self._memberships.add(pool_id)
-        await self._save_memberships()
+        await self.add_membership(pool_id)
 
         logger.log("COMETNET", f"Created pool '{display_name}' ({pool_id})")
         return manifest
@@ -411,12 +409,9 @@ class PoolStore:
             return False
 
         del self._manifests[pool_id]
-        self._memberships.discard(pool_id)
-        self._subscriptions.discard(pool_id)
-
-        # Also remove pool peers for this pool
-        if pool_id in self._pool_peers:
-            del self._pool_peers[pool_id]
+        await self.remove_membership(pool_id)
+        await self.unsubscribe(pool_id)
+        await self.remove_pool_peer(pool_id)
 
         # Delete invites for this pool
         if pool_id in self._invites:
@@ -436,9 +431,6 @@ class PoolStore:
         except Exception:
             pass
 
-        await self._save_memberships()
-        await self._save_subscriptions()
-        await self._save_pool_peers()
         return True
 
     # ==================== Membership Operations ====================
@@ -450,6 +442,16 @@ class PoolStore:
     def get_memberships(self) -> Set[str]:
         """Get all pools we are a member of."""
         return self._memberships.copy()
+
+    async def add_membership(self, pool_id: str) -> None:
+        """Persist and publish a pool membership."""
+        memberships = self._memberships | {pool_id}
+        await self._replace_memberships(memberships)
+
+    async def remove_membership(self, pool_id: str) -> None:
+        """Persist and publish removal of a pool membership."""
+        memberships = self._memberships - {pool_id}
+        await self._replace_memberships(memberships)
 
     async def add_member(
         self,
@@ -573,18 +575,9 @@ class PoolStore:
                     "Cannot leave as the last admin. Promote another member first."
                 )
 
-        # Remove from our memberships
-        self._memberships.discard(pool_id)
-        await self._save_memberships()
-
-        # Unsubscribe from the pool
-        self._subscriptions.discard(pool_id)
-        await self._save_subscriptions()
-
-        # Remove pool peers since we don't need to reconnect to this pool
-        if pool_id in self._pool_peers:
-            del self._pool_peers[pool_id]
-            await self._save_pool_peers()
+        await self.remove_membership(pool_id)
+        await self.unsubscribe(pool_id)
+        await self.remove_pool_peer(pool_id)
 
         # Remove the manifest from local storage
         if pool_id in self._manifests:
@@ -640,14 +633,14 @@ class PoolStore:
 
     async def subscribe(self, pool_id: str) -> None:
         """Subscribe to a pool (trust its members' torrents)."""
-        self._subscriptions.add(pool_id)
-        await self._save_subscriptions()
+        subscriptions = self._subscriptions | {pool_id}
+        await self._replace_subscriptions(subscriptions)
         logger.log("COMETNET", f"Subscribed to pool {pool_id}")
 
     async def unsubscribe(self, pool_id: str) -> None:
         """Unsubscribe from a pool."""
-        self._subscriptions.discard(pool_id)
-        await self._save_subscriptions()
+        subscriptions = self._subscriptions - {pool_id}
+        await self._replace_subscriptions(subscriptions)
         logger.log("COMETNET", f"Unsubscribed from pool {pool_id}")
 
     def is_contributor_trusted(
@@ -799,9 +792,7 @@ class PoolStore:
         # Store manifest (we can't sign it as we're not admin)
         await self.store_manifest(manifest)
 
-        # Mark as member
-        self._memberships.add(pool_id)
-        await self._save_memberships()
+        await self.add_membership(pool_id)
 
         logger.log("COMETNET", f"Joined pool {pool_id} via invite")
         return True
@@ -845,8 +836,15 @@ class PoolStore:
 
     async def _save_memberships(self) -> None:
         """Save memberships to disk."""
+        await self._write_memberships(self._memberships)
+
+    async def _replace_memberships(self, memberships: Set[str]) -> None:
+        await self._write_memberships(memberships)
+        self._memberships = memberships
+
+    async def _write_memberships(self, memberships: Set[str]) -> None:
         memberships_file = self.pools_dir / "memberships.json"
-        await write_text_atomic(memberships_file, json.dumps(sorted(self._memberships)))
+        await write_text_atomic(memberships_file, json.dumps(sorted(memberships)))
 
     async def _load_subscriptions(self) -> None:
         """Load subscriptions from disk."""
@@ -873,10 +871,15 @@ class PoolStore:
 
     async def _save_subscriptions(self) -> None:
         """Save subscriptions to disk."""
+        await self._write_subscriptions(self._subscriptions)
+
+    async def _replace_subscriptions(self, subscriptions: Set[str]) -> None:
+        await self._write_subscriptions(subscriptions)
+        self._subscriptions = subscriptions
+
+    async def _write_subscriptions(self, subscriptions: Set[str]) -> None:
         subscriptions_file = self.pools_dir / "subscriptions.json"
-        await write_text_atomic(
-            subscriptions_file, json.dumps(sorted(self._subscriptions))
-        )
+        await write_text_atomic(subscriptions_file, json.dumps(sorted(subscriptions)))
 
     async def _load_invites(self) -> None:
         """Load invites from disk."""
@@ -941,11 +944,18 @@ class PoolStore:
 
     async def _save_pool_peers(self) -> None:
         """Save known pool peers to disk."""
+        await self._write_pool_peers(self._pool_peers)
+
+    async def _replace_pool_peers(self, pool_peers: Dict[str, Set[str]]) -> None:
+        await self._write_pool_peers(pool_peers)
+        self._pool_peers = pool_peers
+
+    async def _write_pool_peers(self, pool_peers: Dict[str, Set[str]]) -> None:
         peers_file = self.pools_dir / "pool_peers.json"
-        data = {pid: sorted(peers) for pid, peers in sorted(self._pool_peers.items())}
+        data = {pid: sorted(peers) for pid, peers in sorted(pool_peers.items())}
         await write_text_atomic(peers_file, json.dumps(data, indent=2))
 
-    def add_pool_peer(self, pool_id: str, peer_address: str) -> None:
+    async def add_pool_peer(self, pool_id: str, peer_address: str) -> None:
         """
         Add a known peer address for a pool.
 
@@ -954,9 +964,21 @@ class PoolStore:
         """
         if not peer_address:
             return
-        if pool_id not in self._pool_peers:
-            self._pool_peers[pool_id] = set()
-        self._pool_peers[pool_id].add(peer_address)
+        pool_peers = {
+            existing_pool_id: set(peers)
+            for existing_pool_id, peers in self._pool_peers.items()
+        }
+        pool_peers.setdefault(pool_id, set()).add(peer_address)
+        await self._replace_pool_peers(pool_peers)
+
+    async def remove_pool_peer(self, pool_id: str) -> None:
+        """Persist and publish removal of all known peers for a pool."""
+        pool_peers = {
+            existing_pool_id: set(peers)
+            for existing_pool_id, peers in self._pool_peers.items()
+            if existing_pool_id != pool_id
+        }
+        await self._replace_pool_peers(pool_peers)
 
     def get_pool_peers(self, pool_id: str) -> Set[str]:
         """Get known peer addresses for a pool."""

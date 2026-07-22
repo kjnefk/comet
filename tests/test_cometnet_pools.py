@@ -141,14 +141,24 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(store.get_invite("pool-a", created.invite_code).uses, 0)
 
-    async def test_membership_save_failure_propagates(self):
+    async def test_auxiliary_state_is_published_only_after_successful_save(self):
         with tempfile.TemporaryDirectory() as directory:
             store = PoolStore(directory)
-            store._memberships.add("pool-a")
 
             with patch(
                 "comet.cometnet.pools.write_text_atomic",
                 side_effect=OSError("disk unavailable"),
             ):
-                with self.assertRaisesRegex(OSError, "disk unavailable"):
-                    await store._save_memberships()
+                operations = [
+                    store.add_membership("pool-a"),
+                    store.subscribe("pool-a"),
+                    store.add_pool_peer("pool-a", "wss://peer"),
+                ]
+                for operation in operations:
+                    with self.subTest(operation=operation):
+                        with self.assertRaisesRegex(OSError, "disk unavailable"):
+                            await operation
+
+            self.assertEqual(store.get_memberships(), set())
+            self.assertEqual(store.get_subscriptions(), set())
+            self.assertEqual(store.get_all_pool_peers(), {})

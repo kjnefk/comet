@@ -283,19 +283,20 @@ class CometNetService(CometNetBackend):
             if self.identity:
                 my_key = self.identity.public_key_hex
                 manifests = self.pool_store.get_all_manifests()
-                changes = False
+                restored_memberships = set()
                 for pool_id, manifest in manifests.items():
                     if manifest.is_member(my_key):
                         if pool_id not in self.pool_store._memberships:
-                            self.pool_store._memberships.add(pool_id)
-                            changes = True
+                            restored_memberships.add(pool_id)
                             logger.log(
                                 "COMETNET",
                                 f"Restored missing membership for pool {pool_id}",
                             )
 
-                if changes:
-                    await self.pool_store._save_memberships()
+                if restored_memberships:
+                    await self.pool_store._replace_memberships(
+                        self.pool_store.get_memberships() | restored_memberships
+                    )
 
         # System Clock Sync Check
         if not settings.COMETNET_SKIP_TIME_CHECK:
@@ -981,16 +982,13 @@ class CometNetService(CometNetBackend):
 
                     if was_member and not is_now_member:
                         # We were removed from this pool - clean up completely
-                        self.pool_store._memberships.discard(message.pool_id)
-                        self.pool_store._subscriptions.discard(message.pool_id)
+                        await self.pool_store.remove_membership(message.pool_id)
+                        await self.pool_store.unsubscribe(message.pool_id)
+                        await self.pool_store.remove_pool_peer(message.pool_id)
 
                         # Remove the manifest since we're no longer a member
                         if message.pool_id in self.pool_store._manifests:
                             del self.pool_store._manifests[message.pool_id]
-
-                        # Remove pool peers for this pool
-                        if message.pool_id in self.pool_store._pool_peers:
-                            del self.pool_store._pool_peers[message.pool_id]
 
                         # Remove any invites we had for this pool
                         if message.pool_id in self.pool_store._invites:
@@ -1013,10 +1011,6 @@ class CometNetService(CometNetBackend):
                             except Exception:
                                 pass
 
-                        await self.pool_store._save_memberships()
-                        await self.pool_store._save_subscriptions()
-                        await self.pool_store._save_pool_peers()
-
                         logger.log(
                             "COMETNET",
                             f"Removed from pool {message.pool_id} (kicked by admin) - pool data cleaned up",
@@ -1024,8 +1018,7 @@ class CometNetService(CometNetBackend):
                         return  # Don't store anything else for this pool
                     elif not was_member and is_now_member:
                         # We were added to this pool (e.g., via invite on another node)
-                        self.pool_store._memberships.add(message.pool_id)
-                        await self.pool_store._save_memberships()
+                        await self.pool_store.add_membership(message.pool_id)
                         logger.log(
                             "COMETNET",
                             f"Added to pool {message.pool_id}",
@@ -1047,8 +1040,7 @@ class CometNetService(CometNetBackend):
                 # Store the sender's address so we can reconnect later
                 sender_addr = self.transport.get_peer_address(sender_id)
                 if sender_addr:
-                    self.pool_store.add_pool_peer(message.pool_id, sender_addr)
-                    await self.pool_store._save_pool_peers()
+                    await self.pool_store.add_pool_peer(message.pool_id, sender_addr)
 
                 logger.log(
                     "COMETNET",
@@ -1793,12 +1785,10 @@ class CometNetService(CometNetBackend):
             # Check if we now have the manifest and are a member
             manifest = self.pool_store.get_manifest(pool_id)
             if manifest and manifest.is_member(self.identity.public_key_hex):
-                self.pool_store._memberships.add(pool_id)
-                await self.pool_store._save_memberships()
+                await self.pool_store.add_membership(pool_id)
 
                 # Store the node_url so we can reconnect later
-                self.pool_store.add_pool_peer(pool_id, node_url)
-                await self.pool_store._save_pool_peers()
+                await self.pool_store.add_pool_peer(pool_id, node_url)
 
                 logger.log("COMETNET", f"Successfully joined pool {pool_id}")
                 return True
