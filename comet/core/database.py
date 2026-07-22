@@ -506,6 +506,7 @@ async def _apply_sqlite_pragmas(
 
 
 async def setup_database():
+    connected = False
     try:
         if IS_SQLITE:
             db_dir = os.path.dirname(settings.DATABASE_PATH)
@@ -516,6 +517,7 @@ async def setup_database():
             _models_mod.set_comet_foreign_keys_enabled(False)
 
         await database.connect()
+        connected = True
 
         async with _schema_migration_lock():
             if IS_SQLITE:
@@ -544,6 +546,13 @@ async def setup_database():
     except Exception as e:
         logger.error(f"Error setting up the database: {e}")
         logger.exception(traceback.format_exc())
+        if connected:
+            try:
+                await database.disconnect()
+            except Exception as disconnect_error:
+                logger.error(
+                    f"Error disconnecting after failed database setup: {disconnect_error}"
+                )
         raise
 
 
