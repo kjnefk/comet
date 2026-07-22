@@ -139,6 +139,11 @@ class DMMIngester:
                     batch_entries = []
                     processed_files_batch = []
                     for file_path, entries in zip(batch_files, results):
+                        if entries is None:
+                            logger.warning(
+                                f"Failed to decode DMM hashlist, leaving it retryable: {os.path.basename(file_path)}"
+                            )
+                            continue
                         if entries:
                             batch_entries.extend(entries)
 
@@ -231,7 +236,7 @@ def process_file_sync(file_path):
         json_str = decompressFromEncodedURIComponent(encoded_data)
 
         if not json_str:
-            return []
+            return None
 
         data = json.loads(json_str)
 
@@ -241,14 +246,27 @@ def process_file_sync(file_path):
         elif isinstance(data, dict) and "torrents" in data:
             items = data["torrents"]
         else:
-            return []
+            return None
+
+        if not isinstance(items, list):
+            return None
 
         for item in items:
+            if not isinstance(item, dict):
+                continue
             filename = item.get("filename")
             info_hash = item.get("hash")
             size = item.get("bytes", 0)
 
-            if not filename or not info_hash:
+            if (
+                not isinstance(filename, str)
+                or not filename
+                or not isinstance(info_hash, str)
+                or not info_hash
+                or not isinstance(size, int)
+                or isinstance(size, bool)
+                or size < 0
+            ):
                 continue
 
             try:
@@ -256,7 +274,10 @@ def process_file_sync(file_path):
             except UnicodeEncodeError:
                 filename = filename.encode("utf-8", "ignore").decode("utf-8")
 
-            parsed = RTN.parse(filename)
+            try:
+                parsed = RTN.parse(filename)
+            except Exception:
+                continue
 
             results.append(
                 {
@@ -270,7 +291,7 @@ def process_file_sync(file_path):
 
         return results
     except Exception:
-        return []
+        return None
 
 
 def extract_zip_sync(zip_path, extract_dir):
