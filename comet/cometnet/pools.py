@@ -42,6 +42,63 @@ from comet.core.models import settings
 from comet.utils.atomic_file import write_text_atomic
 
 
+def _validate_pool_id(value: object) -> str:
+    if type(value) is not str or value != value.strip().lower():
+        raise ValueError("pool_id must use its canonical lowercase form")
+    if len(value) < 2 or len(value) > 64:
+        raise ValueError("pool_id must be 2-64 characters")
+    if not value.replace("-", "").replace("_", "").isalnum():
+        raise ValueError("pool_id must be alphanumeric with - or _")
+    return value
+
+
+def _decode_pool_id_list(data: object, label: str) -> Set[str]:
+    if type(data) is not list:
+        raise ValueError(f"{label} root must be a list")
+    pool_ids = [_validate_pool_id(value) for value in data]
+    if len(pool_ids) != len(set(pool_ids)):
+        raise ValueError(f"{label} pool IDs must be unique")
+    return set(pool_ids)
+
+
+def _encode_pool_id_set(values: object, label: str) -> List[str]:
+    if type(values) is not set:
+        raise ValueError(f"{label} must be a set")
+    return sorted(_validate_pool_id(value) for value in values)
+
+
+def _decode_pool_peers(data: object) -> Dict[str, Set[str]]:
+    if type(data) is not dict:
+        raise ValueError("pool peers root must be an object")
+
+    result: Dict[str, Set[str]] = {}
+    for raw_pool_id, raw_peers in data.items():
+        pool_id = _validate_pool_id(raw_pool_id)
+        if type(raw_peers) is not list or any(
+            type(peer) is not str or not peer for peer in raw_peers
+        ):
+            raise ValueError("pool peer values must be lists of non-empty strings")
+        if len(raw_peers) != len(set(raw_peers)):
+            raise ValueError("pool peer addresses must be unique")
+        result[pool_id] = set(raw_peers)
+    return result
+
+
+def _encode_pool_peers(data: object) -> Dict[str, List[str]]:
+    if type(data) is not dict:
+        raise ValueError("pool peers must be an object")
+
+    result: Dict[str, List[str]] = {}
+    for raw_pool_id, raw_peers in sorted(data.items()):
+        pool_id = _validate_pool_id(raw_pool_id)
+        if type(raw_peers) is not set or any(
+            type(peer) is not str or not peer for peer in raw_peers
+        ):
+            raise ValueError("pool peer values must be sets of non-empty strings")
+        result[pool_id] = sorted(raw_peers)
+    return result
+
+
 class MemberRole(str, Enum):
     """Roles within a pool."""
 
@@ -143,13 +200,7 @@ class PoolManifest(BaseModel):
     @classmethod
     def validate_pool_id(cls, value):
         """Validate pool ID format."""
-        if type(value) is not str or value != value.strip().lower():
-            raise ValueError("pool_id must use its canonical lowercase form")
-        if len(value) < 2 or len(value) > 64:
-            raise ValueError("pool_id must be 2-64 characters")
-        if not value.replace("-", "").replace("_", "").isalnum():
-            raise ValueError("pool_id must be alphanumeric with - or _")
-        return value
+        return _validate_pool_id(value)
 
     @field_validator("creator_key", "display_name", mode="before")
     @classmethod
@@ -206,7 +257,9 @@ class PoolManifest(BaseModel):
         public_keys = [member.public_key for member in self.members]
         if len(public_keys) != len(set(public_keys)):
             raise ValueError("manifest member public keys must be unique")
-        creators = [member for member in self.members if member.role is MemberRole.CREATOR]
+        creators = [
+            member for member in self.members if member.role is MemberRole.CREATOR
+        ]
         if len(creators) != 1 or creators[0].public_key != self.creator_key:
             raise ValueError("manifest must contain exactly its declared creator")
         if self.updated_at < self.created_at:
@@ -309,13 +362,7 @@ class PoolInvite(BaseModel):
     @field_validator("pool_id")
     @classmethod
     def validate_pool_id(cls, value: str) -> str:
-        if value != value.strip().lower():
-            raise ValueError("pool_id must use its canonical lowercase form")
-        if not 2 <= len(value) <= 64:
-            raise ValueError("pool_id must be 2-64 characters")
-        if not value.replace("-", "").replace("_", "").isalnum():
-            raise ValueError("pool_id must be alphanumeric with - or _")
-        return value
+        return _validate_pool_id(value)
 
     @field_validator("invite_code", "created_by")
     @classmethod
@@ -1101,12 +1148,8 @@ class PoolStore:
             try:
                 async with aiofiles.open(memberships_file, "r") as f:
                     content = await f.read()
-                    data = json.loads(content)
-                if not isinstance(data, list):
-                    raise ValueError("memberships root must be a list")
-                self._memberships = {
-                    value for value in data if isinstance(value, str) and value
-                }
+                data = json.loads(content)
+                self._memberships = _decode_pool_id_list(data, "memberships")
             except Exception as e:
                 logger.warning(f"Failed to load memberships: {e}")
 
@@ -1120,7 +1163,8 @@ class PoolStore:
 
     async def _write_memberships(self, memberships: Set[str]) -> None:
         memberships_file = self.pools_dir / "memberships.json"
-        await write_text_atomic(memberships_file, json.dumps(sorted(memberships)))
+        payload = _encode_pool_id_set(memberships, "memberships")
+        await write_text_atomic(memberships_file, json.dumps(payload))
 
     async def _load_subscriptions(self) -> None:
         """Load subscriptions from disk."""
@@ -1136,12 +1180,8 @@ class PoolStore:
             try:
                 async with aiofiles.open(subscriptions_file, "r") as f:
                     content = await f.read()
-                    data = json.loads(content)
-                if not isinstance(data, list):
-                    raise ValueError("subscriptions root must be a list")
-                self._subscriptions.update(
-                    value for value in data if isinstance(value, str) and value
-                )
+                data = json.loads(content)
+                self._subscriptions.update(_decode_pool_id_list(data, "subscriptions"))
             except Exception as e:
                 logger.warning(f"Failed to load subscriptions: {e}")
 
@@ -1155,7 +1195,8 @@ class PoolStore:
 
     async def _write_subscriptions(self, subscriptions: Set[str]) -> None:
         subscriptions_file = self.pools_dir / "subscriptions.json"
-        await write_text_atomic(subscriptions_file, json.dumps(sorted(subscriptions)))
+        payload = _encode_pool_id_set(subscriptions, "subscriptions")
+        await write_text_atomic(subscriptions_file, json.dumps(payload))
 
     async def _load_invites(self) -> None:
         """Load invites from disk."""
@@ -1165,23 +1206,34 @@ class PoolStore:
             return
 
         for pool_dir in self.invites_dir.iterdir():
-            if pool_dir.is_dir():
-                pool_id = pool_dir.name
-                self._invites[pool_id] = {}
+            if not pool_dir.is_dir():
+                continue
+            try:
+                pool_id = _validate_pool_id(pool_dir.name)
+            except ValueError as error:
+                logger.warning(f"Failed to load invite directory {pool_dir}: {error}")
+                continue
 
-                for invite_file in pool_dir.glob("*.json"):
-                    try:
-                        async with aiofiles.open(invite_file, "r") as f:
-                            content = await f.read()
-                            data = json.loads(content)
-                        invite = PoolInvite.model_validate(data)
-                        if invite.is_valid():
-                            self._invites[pool_id][invite.invite_code] = invite
-                        else:
-                            # Clean up expired invites
-                            await run_in_executor(invite_file.unlink)
-                    except Exception as e:
-                        logger.warning(f"Failed to load invite {invite_file}: {e}")
+            self._invites[pool_id] = {}
+            for invite_file in pool_dir.glob("*.json"):
+                try:
+                    async with aiofiles.open(invite_file, "r") as f:
+                        content = await f.read()
+                        data = json.loads(content)
+                    invite = PoolInvite.model_validate(data)
+                    if invite.pool_id != pool_id:
+                        raise ValueError("invite pool_id must match its directory")
+                    if invite.invite_code != invite_file.stem:
+                        raise ValueError("invite code must match its filename")
+                    if not invite.signature:
+                        raise ValueError("persisted invite signature must be non-empty")
+                    if invite.is_valid():
+                        self._invites[pool_id][invite.invite_code] = invite
+                    else:
+                        # Clean up expired or exhausted invites.
+                        await run_in_executor(invite_file.unlink)
+                except Exception as e:
+                    logger.warning(f"Failed to load invite {invite_file}: {e}")
 
     async def _save_invite(self, invite: PoolInvite) -> None:
         """Save an invite to disk."""
@@ -1203,18 +1255,8 @@ class PoolStore:
             try:
                 async with aiofiles.open(peers_file, "r") as f:
                     content = await f.read()
-                    data = json.loads(content)
-                if not isinstance(data, dict):
-                    raise ValueError("pool peers root must be an object")
-                # Convert lists back to sets
-                for pool_id, peers in data.items():
-                    if not isinstance(pool_id, str) or not pool_id:
-                        continue
-                    if not isinstance(peers, list):
-                        continue
-                    self._pool_peers[pool_id] = {
-                        peer for peer in peers if isinstance(peer, str) and peer
-                    }
+                data = json.loads(content)
+                self._pool_peers = _decode_pool_peers(data)
             except Exception as e:
                 logger.warning(f"Failed to load pool peers: {e}")
 
@@ -1228,7 +1270,7 @@ class PoolStore:
 
     async def _write_pool_peers(self, pool_peers: Dict[str, Set[str]]) -> None:
         peers_file = self.pools_dir / "pool_peers.json"
-        data = {pid: sorted(peers) for pid, peers in sorted(pool_peers.items())}
+        data = _encode_pool_peers(pool_peers)
         await write_text_atomic(peers_file, json.dumps(data, indent=2))
 
     async def add_pool_peer(self, pool_id: str, peer_address: str) -> None:

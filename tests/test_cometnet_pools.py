@@ -32,7 +32,7 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_load_uses_only_current_container_shapes_and_string_items(self):
+    async def test_load_rejects_partially_invalid_auxiliary_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "memberships.json").write_text(
@@ -51,11 +51,60 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
                 store = PoolStore(directory)
                 await store.load()
 
-            self.assertEqual(store._memberships, {"member-a", "member-b"})
+            self.assertEqual(store._memberships, set())
             self.assertEqual(store._subscriptions, {"configured"})
+            self.assertEqual(store._pool_peers, {})
+
+    async def test_load_accepts_only_exact_auxiliary_file_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "memberships.json").write_text('["pool-a","pool-b"]')
+            (root / "subscriptions.json").write_text('["pool-a"]')
+            (root / "pool_peers.json").write_text(
+                '{"pool-a":["wss://one","wss://two"],"pool-b":[]}'
+            )
+
+            store = PoolStore(directory)
+            await store.load()
+
+            self.assertEqual(store.get_memberships(), {"pool-a", "pool-b"})
+            self.assertEqual(store.get_subscriptions(), {"pool-a"})
             self.assertEqual(
                 store._pool_peers,
-                {"pool-a": {"wss://one"}, "pool-c": set()},
+                {"pool-a": {"wss://one", "wss://two"}, "pool-b": set()},
+            )
+
+    async def test_invite_load_requires_matching_persisted_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._manifest())
+            invite = PoolInvite(
+                pool_id="pool-a",
+                invite_code="valid-code",
+                created_by="creator-key",
+                signature="signature",
+            )
+            invite_dir = Path(directory, "invites", "pool-a")
+            invite_dir.mkdir(parents=True, exist_ok=True)
+            (invite_dir / "valid-code.json").write_text(invite.model_dump_json())
+
+            wrong_pool = invite.model_copy(
+                update={"pool_id": "pool-b", "invite_code": "wrong-pool"}
+            )
+            (invite_dir / "wrong-pool.json").write_text(wrong_pool.model_dump_json())
+            wrong_code = invite.model_copy(update={"invite_code": "inside-code"})
+            (invite_dir / "outside-code.json").write_text(wrong_code.model_dump_json())
+            unsigned = invite.model_copy(
+                update={"invite_code": "unsigned", "signature": ""}
+            )
+            (invite_dir / "unsigned.json").write_text(unsigned.model_dump_json())
+
+            reloaded = PoolStore(directory)
+            await reloaded.load()
+
+            self.assertEqual(
+                [loaded.invite_code for loaded in reloaded.get_invites("pool-a")],
+                ["valid-code"],
             )
 
     async def test_manifest_snapshots_require_an_explicit_successful_store(self):
@@ -160,7 +209,9 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
         malformed.append(non_finite_timestamp)
 
         duplicate_member = copy.deepcopy(valid)
-        duplicate_member["members"].append(copy.deepcopy(duplicate_member["members"][0]))
+        duplicate_member["members"].append(
+            copy.deepcopy(duplicate_member["members"][0])
+        )
         malformed.append(duplicate_member)
 
         mismatched_creator = copy.deepcopy(valid)
@@ -190,9 +241,7 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
 
             misnamed = copy.deepcopy(valid)
             misnamed["pool_id"] = "pool-c"
-            (root / "manifests" / "wrong-name.json").write_text(
-                json.dumps(misnamed)
-            )
+            (root / "manifests" / "wrong-name.json").write_text(json.dumps(misnamed))
 
             await store.load()
 
@@ -349,9 +398,7 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
                 release_save.set()
                 await asyncio.gather(save_task, addition_task)
 
-            persisted = json.loads(
-                Path(directory, "memberships.json").read_text()
-            )
+            persisted = json.loads(Path(directory, "memberships.json").read_text())
             self.assertEqual(persisted, ["pool-a", "pool-b"])
 
     async def test_delete_pool_cleans_persisted_and_published_state(self):
@@ -492,8 +539,12 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
                 return_exceptions=True,
             )
 
-            self.assertEqual(sum(isinstance(result, PoolManifest) for result in results), 1)
-            self.assertEqual(sum(isinstance(result, ValueError) for result in results), 1)
+            self.assertEqual(
+                sum(isinstance(result, PoolManifest) for result in results), 1
+            )
+            self.assertEqual(
+                sum(isinstance(result, ValueError) for result in results), 1
+            )
             self.assertEqual(set(store.get_all_manifests()), {"pool-a"})
             self.assertEqual(store.get_memberships(), {"pool-a"})
 
