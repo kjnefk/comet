@@ -107,15 +107,17 @@ CACHE_AVAILABILITY_QUERY = f"""
 async def cache_availability(debrid_service: str, availability: list):
     current_time = time.time()
 
-    values = [
-        {
+    values_by_scope = {}
+    for file in availability:
+        scope = build_scope_params(file["season"], file["episode"])
+        value = {
             "debrid_service": debrid_service,
             "info_hash": file["info_hash"],
             "file_index": str(file["index"]) if file["index"] is not None else None,
             "title": file["title"],
             "season": file["season"],
             "episode": file["episode"],
-            **build_scope_params(file["season"], file["episode"]),
+            **scope,
             "size": file["size"] if file["index"] is not None else None,
             "parsed_json": (
                 encode_json_param(file["parsed"], default=default_dump)
@@ -125,10 +127,15 @@ async def cache_availability(debrid_service: str, availability: list):
             "updated_at": current_time,
             "update_interval": DEBRID_UPDATE_INTERVAL,
         }
-        for file in availability
-    ]
+        values_by_scope[
+            (file["info_hash"], scope["season_norm"], scope["episode_norm"])
+        ] = value
 
-    await database.execute_many(CACHE_AVAILABILITY_QUERY, values)
+    if values_by_scope:
+        await database.execute_many(
+            CACHE_AVAILABILITY_QUERY,
+            list(values_by_scope.values()),
+        )
 
 
 async def get_cached_availability(

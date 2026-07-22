@@ -47,3 +47,39 @@ class DebridCacheTaskTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(debrid_cache._cache_write_tasks)
         fake_logger.warning.assert_called_once()
+
+
+class DebridCachePersistenceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_duplicate_conflict_scopes_are_written_once_with_last_value(self):
+        first = {
+            "info_hash": "hash",
+            "index": 1,
+            "title": "first.mkv",
+            "season": 1,
+            "episode": 2,
+            "size": 10,
+            "parsed": None,
+        }
+        selected = {**first, "index": 3, "title": "selected.mkv", "size": 30}
+
+        with patch.object(
+            debrid_cache.database, "execute_many", new=AsyncMock()
+        ) as execute:
+            await debrid_cache.cache_availability(
+                "realdebrid", [first, selected, {**first, "episode": 3}]
+            )
+
+        execute.assert_awaited_once()
+        _, rows = execute.await_args.args
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["file_index"], "3")
+        self.assertEqual(rows[0]["title"], "selected.mkv")
+        self.assertEqual(rows[1]["episode"], 3)
+
+    async def test_empty_availability_skips_database_call(self):
+        with patch.object(
+            debrid_cache.database, "execute_many", new=AsyncMock()
+        ) as execute:
+            await debrid_cache.cache_availability("realdebrid", [])
+
+        execute.assert_not_awaited()
