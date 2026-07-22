@@ -1407,7 +1407,7 @@ wheels = [
 [[package]]
 name = "torrent-parse-rank"
 version = "0.1.0"
-source = { git = "https://github.com/g0ldyy/torrent-parse-rank#846dace28f0cdd0799814086d4aae0b63d37c2ac" }
+source = { git = "https://github.com/g0ldyy/torrent-parse-rank#d459870ba911668df2b3609085a56c11c2bd49f5" }
 dependencies = [
     { name = "orjson" },
     { name = "pydantic" },
