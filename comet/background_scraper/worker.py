@@ -611,6 +611,7 @@ class BackgroundScraperWorker:
                     await asyncio.sleep(interval_seconds)
             except asyncio.CancelledError:
                 self.is_running = False
+                raise
             except Exception as e:
                 self.last_error = str(e)
                 logger.error(f"Error in background scraper loop: {e}")
@@ -623,7 +624,12 @@ class BackgroundScraperWorker:
 
         run_status = "completed"
         run_error = None
-        await self._insert_run_row(run_id)
+        try:
+            await self._insert_run_row(run_id)
+        except BaseException:
+            self.current_run_id = None
+            self.metadata_scraper = None
+            raise
 
         try:
             await self._wait_if_paused()
@@ -745,17 +751,21 @@ class BackgroundScraperWorker:
             self.last_error = str(e)
             logger.error(f"Run {run_id} failed: {e}")
         finally:
-            await self._reset_running_items()
-            await self._finalize_run_row(run_id, run_status, run_error)
-            logger.log(
-                "BACKGROUND_SCRAPER",
-                f"Run {run_id} finished with status={run_status} "
-                f"processed={self.stats.total_processed} success={self.stats.total_success} "
-                f"failed={self.stats.total_failed} torrents={self.stats.total_torrents_found} "
-                f"discovered={self.stats.discovered_items} duration={self.stats.duration:.2f}s",
-            )
-            self.current_run_id = None
-            self.metadata_scraper = None
+            try:
+                try:
+                    await self._reset_running_items()
+                finally:
+                    await self._finalize_run_row(run_id, run_status, run_error)
+            finally:
+                logger.log(
+                    "BACKGROUND_SCRAPER",
+                    f"Run {run_id} finished with status={run_status} "
+                    f"processed={self.stats.total_processed} success={self.stats.total_success} "
+                    f"failed={self.stats.total_failed} torrents={self.stats.total_torrents_found} "
+                    f"discovered={self.stats.discovered_items} duration={self.stats.duration:.2f}s",
+                )
+                self.current_run_id = None
+                self.metadata_scraper = None
 
     async def _insert_run_row(self, run_id: str):
         now = time.time()
