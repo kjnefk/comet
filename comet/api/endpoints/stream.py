@@ -16,17 +16,27 @@ from comet.services.anime import anime_mapper
 from comet.services.cache_state import CacheStateManager
 from comet.services.debrid import DebridService
 from comet.services.debrid_account_scraper import (
-    ensure_account_snapshot_ready, get_account_torrents_for_media,
-    ingest_account_torrents_to_public_cache, schedule_account_snapshot_refresh)
+    ensure_account_snapshot_ready,
+    get_account_torrents_for_media,
+    ingest_account_torrents_to_public_cache,
+    schedule_account_snapshot_refresh,
+)
 from comet.services.lock import DistributedLock
 from comet.services.orchestration import TorrentManager
 from comet.services.trackers import trackers
-from comet.utils.cache import (CachedJSONResponse, CachePolicies,
-                               check_etag_match, generate_etag,
-                               not_modified_response)
-from comet.utils.formatting import (format_chilllink, format_title,
-                                    get_formatted_components,
-                                    get_formatted_components_plain)
+from comet.utils.cache import (
+    CachedJSONResponse,
+    CachePolicies,
+    check_etag_match,
+    generate_etag,
+    not_modified_response,
+)
+from comet.utils.formatting import (
+    format_chilllink,
+    format_title,
+    get_formatted_components,
+    get_formatted_components_plain,
+)
 from comet.utils.http_client import http_client_manager
 from comet.utils.network import get_client_ip
 from comet.utils.parsing import parse_media_id
@@ -168,10 +178,7 @@ def _episode_matching_policy(
         and media_only_id.startswith("tt")
     )
     allow_debrid_verified_season_packs = (
-        is_imdb_episode_request
-        and cached_only
-        and has_debrid
-        and not enable_torrent
+        is_imdb_episode_request and cached_only and has_debrid and not enable_torrent
     )
     reject_unknown_episode_files = (
         is_imdb_episode_request and not allow_debrid_verified_season_packs
@@ -367,7 +374,10 @@ async def get_and_cache_multi_service_availability(
 
         try:
             debrid_instance = DebridService(service, api_key, ip)
-            cached_hashes = await debrid_instance.get_and_cache_availability(
+            (
+                cached_hashes,
+                torrent_updates,
+            ) = await debrid_instance.get_and_cache_availability(
                 session,
                 info_hashes,
                 seeders_map,
@@ -381,9 +391,9 @@ async def get_and_cache_multi_service_availability(
                 target_air_date=target_air_date,
             )
 
-            return service, cached_hashes, None
+            return service, cached_hashes, torrent_updates, None
         except Exception as e:
-            return service, None, e
+            return service, None, None, e
 
     if unique_services:
         results = await asyncio.gather(
@@ -391,8 +401,13 @@ async def get_and_cache_multi_service_availability(
             return_exceptions=True,
         )
 
+        enriched_hashes = set()
         for result in results:
-            service, cache_map, error = result
+            if isinstance(result, Exception):
+                logger.log("DEBRID", f"❌ Error checking availability: {result}")
+                continue
+
+            service, cache_map, torrent_updates, error = result
             if error:
                 if isinstance(error, DebridAuthError):
                     errors[service] = error
@@ -402,6 +417,14 @@ async def get_and_cache_multi_service_availability(
                         f"❌ Error checking availability on {service}: {error}",
                     )
                 continue
+
+            for info_hash, update in torrent_updates.items():
+                if info_hash in enriched_hashes:
+                    continue
+                torrent = torrents.get(info_hash)
+                if torrent is not None:
+                    torrent.update(update)
+                    enriched_hashes.add(info_hash)
 
             if cache_map:
                 for info_hash in cache_map:
@@ -588,16 +611,14 @@ async def stream(
             if kitsu_id and kitsu_id not in cache_media_ids:
                 cache_media_ids.append(kitsu_id)
 
-    is_imdb_episode_request, reject_unknown_episode_files = (
-        _episode_matching_policy(
-            media_type,
-            media_only_id,
-            search_season,
-            search_episode,
-            cached_only=bool(config["cachedOnly"]),
-            has_debrid=bool(debrid_entries),
-            enable_torrent=enable_torrent,
-        )
+    is_imdb_episode_request, reject_unknown_episode_files = _episode_matching_policy(
+        media_type,
+        media_only_id,
+        search_season,
+        search_episode,
+        cached_only=bool(config["cachedOnly"]),
+        has_debrid=bool(debrid_entries),
+        enable_torrent=enable_torrent,
     )
     target_air_date = None
     if is_imdb_episode_request:
