@@ -110,6 +110,12 @@ class IndexerScraperTests(unittest.IsolatedAsyncioTestCase):
               <title>Obsession.2026.1080p.WEB-DL.x264</title>
               <torznab:attr name="size" value="2000" />
               <torznab:attr name="infohash" value="2222222222222222222222222222222222222222" />
+              <torznab:attr name="indexername" value="Knaben" />
+            </item>
+            <item>
+              <title>Obsession.2026.720p.WEB-DL.x264</title>
+              <torznab:attr name="size" value="1000" />
+              <torznab:attr name="infohash" value="3333333333333333333333333333333333333333" />
             </item>
           </channel>
         </rss>
@@ -118,4 +124,7 @@ class IndexerScraperTests(unittest.IsolatedAsyncioTestCase):
 
         torrents = await scraper.scrape(REQUEST)
 
-        self.assertEqual([torrent["infoHash"] for torrent in torrents], ["2" * 40])
+        self.assertEqual(
+            [(torrent["infoHash"], torrent["tracker"]) for torrent in torrents],
+            [("2" * 40, "StremThru|Knaben"), ("3" * 40, "StremThru")],
+        )

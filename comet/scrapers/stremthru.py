@@ -37,6 +37,7 @@ class StremthruScraper(BaseScraper):
 
                     size = None
                     info_hash = None
+                    indexer_name = None
 
                     for attr in item.findall(
                         ".//torznab:attr",
@@ -49,9 +50,15 @@ class StremthruScraper(BaseScraper):
                             size = int(attr_value)
                         elif attr_name == "infohash":
                             info_hash = attr_value
+                        elif attr_name == "indexername" and attr_value:
+                            indexer_name = attr_value.strip() or None
 
                     if size is None or info_hash is None:
                         continue
+
+                    tracker = "StremThru" + (
+                        f"|{indexer_name}" if indexer_name else ""
+                    )
 
                     torrents.append(
                         {
@@ -60,7 +67,7 @@ class StremthruScraper(BaseScraper):
                             "fileIndex": None,
                             "seeders": None,
                             "size": size,
-                            "tracker": "StremThru",
+                            "tracker": tracker,
                             "sources": [],
                         }
                     )
