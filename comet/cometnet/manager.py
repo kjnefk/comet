@@ -1044,41 +1044,18 @@ class CometNetService(CometNetBackend):
         invite_code = message.invite_code
         requester_key = message.requester_key
 
-        # Get the invite
-        invite = self.pool_store.get_invite(pool_id, invite_code)
-        if not invite or not invite.is_valid():
+        accepted = await self.pool_store.accept_invite_member(
+            pool_id,
+            invite_code,
+            requester_key,
+            alias=message.alias,
+            signing_identity=self.identity,
+        )
+        if accepted is None:
             return
+        manifest, invite, added = accepted
 
-        # Get the manifest
-        manifest = self.pool_store.get_manifest(pool_id)
-        if not manifest:
-            return
-
-        # Check if already a member
-        if manifest.is_member(requester_key):
-            # Already a member, just send them the manifest
-            pass
-        else:
-            # Add as member
-
-            manifest.members.append(
-                PoolMember(
-                    public_key=requester_key,
-                    role=MemberRole.MEMBER,
-                    added_by=invite.created_by,
-                    alias=message.alias,
-                )
-            )
-            manifest.version += 1
-            manifest.updated_at = time.time()
-
-            # Increment invite usage
-            invite.uses += 1
-            await self.pool_store._save_invite(invite)
-
-            # Save updated manifest
-            await self.pool_store.store_manifest(manifest, self.identity)
-
+        if added:
             requester_node_id = NodeIdentity.node_id_from_public_key(requester_key)
             logger.log(
                 "COMETNET",
@@ -1088,15 +1065,15 @@ class CometNetService(CometNetBackend):
         # Send the manifest back to the requester
         await self._send_pool_manifest(sender_id, manifest)
 
-        # Broadcast update to all pool members (optimized)
-        await self._broadcast_pool_member_update(
-            pool_id=pool_id,
-            action="add",
-            member_key=requester_key,
-            updated_by=invite.created_by,
-            manifest_signatures=manifest.signatures,
-            exclude={sender_id},
-        )
+        if added:
+            await self._broadcast_pool_member_update(
+                pool_id=pool_id,
+                action="add",
+                member_key=requester_key,
+                updated_by=invite.created_by,
+                manifest_signatures=manifest.signatures,
+                exclude={sender_id},
+            )
 
     async def _handle_pool_member_update(
         self, sender_id: str, message: AnyMessage

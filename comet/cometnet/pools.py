@@ -11,7 +11,9 @@ Key concepts:
 - Subscriptions: Pools this node trusts (accepts torrents from)
 """
 
+import asyncio
 import json
+import math
 import secrets
 import shutil
 import time
@@ -22,7 +24,14 @@ from typing import Dict, List, Optional, Set
 
 import aiofiles
 import msgpack
-from pydantic import BaseModel, Field, computed_field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from comet.cometnet.crypto import NodeIdentity
 from comet.cometnet.utils import canonicalize_data, run_in_executor
@@ -184,6 +193,8 @@ class PoolManifest(BaseModel):
 class PoolInvite(BaseModel):
     """An invitation to join a pool."""
 
+    model_config = ConfigDict(extra="forbid")
+
     pool_id: str
     invite_code: str = Field(default_factory=lambda: secrets.token_urlsafe(16))
     created_by: str  # Admin public key
@@ -194,9 +205,52 @@ class PoolInvite(BaseModel):
     signature: str = ""  # Signature from creating admin
     node_url: str = ""  # URL of the node that created the invite
 
+    @field_validator("pool_id")
+    @classmethod
+    def validate_pool_id(cls, value: str) -> str:
+        if value != value.strip().lower():
+            raise ValueError("pool_id must use its canonical lowercase form")
+        if not 2 <= len(value) <= 64:
+            raise ValueError("pool_id must be 2-64 characters")
+        if not value.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("pool_id must be alphanumeric with - or _")
+        return value
+
+    @field_validator("invite_code", "created_by")
+    @classmethod
+    def validate_required_strings(cls, value: str) -> str:
+        if not value:
+            raise ValueError("invite identity fields must be non-empty")
+        return value
+
+    @field_validator("created_at", "expires_at", mode="before")
+    @classmethod
+    def validate_timestamps(cls, value):
+        if value is None:
+            return value
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise ValueError("invite timestamps must be finite non-negative numbers")
+        return value
+
+    @field_validator("max_uses", "uses", mode="before")
+    @classmethod
+    def validate_use_counts(cls, value, info):
+        if value is None and info.field_name == "max_uses":
+            return value
+        minimum = 1 if info.field_name == "max_uses" else 0
+        if type(value) is not int or value < minimum:
+            raise ValueError(f"{info.field_name} must be an integer >= {minimum}")
+        return value
+
+    @model_validator(mode="after")
+    def validate_usage(self):
+        if self.max_uses is not None and self.uses > self.max_uses:
+            raise ValueError("uses cannot exceed max_uses")
+        return self
+
     def is_valid(self) -> bool:
         """Check if the invite is still valid."""
-        if self.expires_at and time.time() > self.expires_at:
+        if self.expires_at is not None and time.time() > self.expires_at:
             return False
         if self.max_uses is not None and self.uses >= self.max_uses:
             return False
@@ -283,6 +337,7 @@ class PoolStore:
         ] = {}  # pool_id -> {code -> invite}
         self._pool_peers: Dict[str, Set[str]] = {}  # pool_id -> set of peer addresses
         self._dirty_manifests: Set[str] = set()  # Manifests that need saving
+        self._mutation_lock = asyncio.Lock()
 
         # Ensure directories exist
         self.manifests_dir.mkdir(parents=True, exist_ok=True)
@@ -688,10 +743,15 @@ class PoolStore:
         if not manifest.is_admin(identity.public_key_hex):
             raise PermissionError("Only admins can create invites")
 
+        if expires_in is not None and (type(expires_in) is not int or expires_in <= 0):
+            raise ValueError("expires_in must be a positive integer or None")
+        if max_uses is not None and (type(max_uses) is not int or max_uses <= 0):
+            raise ValueError("max_uses must be a positive integer or None")
+
         invite = PoolInvite(
             pool_id=pool_id,
             created_by=identity.public_key_hex,
-            expires_at=time.time() + expires_in if expires_in else None,
+            expires_at=time.time() + expires_in if expires_in is not None else None,
             max_uses=max_uses,
             node_url=node_url or "",
         )
@@ -751,42 +811,56 @@ class PoolStore:
         Returns:
             True if successfully joined
         """
-        invite = self.get_invite(pool_id, invite_code)
-        if not invite or not invite.is_valid():
-            return False
-
-        manifest = self.get_manifest(pool_id)
-        if not manifest:
-            return False
-
-        # Already a member?
-        if manifest.is_member(identity.public_key_hex):
-            return True
-
-        # Add as member (note: this is local, needs to be propagated)
-        manifest.members.append(
-            PoolMember(
-                public_key=identity.public_key_hex,
-                role=MemberRole.MEMBER,
-                added_by=invite.created_by,
-                alias=alias,
-            )
+        accepted = await self.accept_invite_member(
+            pool_id,
+            invite_code,
+            identity.public_key_hex,
+            alias=alias,
         )
-
-        manifest.version += 1
-        manifest.updated_at = time.time()
-
-        # Increment invite usage
-        invite.uses += 1
-        await self._save_invite(invite)
-
-        # Store manifest (we can't sign it as we're not admin)
-        await self.store_manifest(manifest)
+        if accepted is None:
+            return False
 
         await self.add_membership(pool_id)
 
         logger.log("COMETNET", f"Joined pool {pool_id} via invite")
         return True
+
+    async def accept_invite_member(
+        self,
+        pool_id: str,
+        invite_code: str,
+        member_key: str,
+        *,
+        alias: Optional[str] = None,
+        signing_identity=None,
+    ) -> Optional[tuple[PoolManifest, PoolInvite, bool]]:
+        """Atomically validate/consume an invite and publish its member manifest."""
+        async with self._mutation_lock:
+            invite = self.get_invite(pool_id, invite_code)
+            if not invite or not invite.is_valid():
+                return None
+
+            manifest = self.get_manifest(pool_id)
+            if not manifest:
+                return None
+            if manifest.is_member(member_key):
+                return manifest, invite, False
+
+            manifest.members.append(
+                PoolMember(
+                    public_key=member_key,
+                    role=MemberRole.MEMBER,
+                    added_by=invite.created_by,
+                    alias=alias,
+                )
+            )
+            manifest.version += 1
+            manifest.updated_at = time.time()
+
+            invite.uses += 1
+            await self._save_invite(invite)
+            await self.store_manifest(manifest, signing_identity)
+            return manifest, invite, True
 
     # ==================== Persistence ====================
 

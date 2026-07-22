@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -210,3 +211,60 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(store.get_memberships(), set())
             self.assertEqual(store.get_subscriptions(), set())
             self.assertEqual(store.get_all_pool_peers(), {})
+
+    async def test_concurrent_join_requests_cannot_overuse_invite(self):
+        class Identity:
+            public_key_hex = "creator-key"
+
+            async def sign_hex_async(self, payload):
+                del payload
+                return "signature"
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._manifest())
+            invite = await store.create_invite("pool-a", Identity(), max_uses=1)
+
+            results = await asyncio.gather(
+                store.accept_invite_member(
+                    "pool-a",
+                    invite.invite_code,
+                    "member-a",
+                    signing_identity=Identity(),
+                ),
+                store.accept_invite_member(
+                    "pool-a",
+                    invite.invite_code,
+                    "member-b",
+                    signing_identity=Identity(),
+                ),
+            )
+
+            self.assertEqual(sum(result is not None for result in results), 1)
+            self.assertEqual(store.get_invite("pool-a", invite.invite_code).uses, 1)
+            member_keys = {
+                member.public_key for member in store.get_manifest("pool-a").members
+            }
+            self.assertEqual(len(member_keys & {"member-a", "member-b"}), 1)
+
+    async def test_invite_limits_reject_boolean_zero_and_non_finite_values(self):
+        class Identity:
+            public_key_hex = "creator-key"
+
+            async def sign_hex_async(self, payload):
+                del payload
+                return "signature"
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._manifest())
+
+            for arguments in [
+                {"max_uses": True},
+                {"max_uses": 0},
+                {"expires_in": True},
+                {"expires_in": 0},
+            ]:
+                with self.subTest(arguments=arguments):
+                    with self.assertRaises(ValueError):
+                        await store.create_invite("pool-a", Identity(), **arguments)
