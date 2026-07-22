@@ -1,4 +1,6 @@
+import re
 import time
+from urllib.parse import urlsplit
 
 import mediaflow_proxy.utils.http_utils
 import orjson
@@ -25,9 +27,53 @@ from comet.services.status_video import build_status_video_response
 from comet.services.streaming.manager import custom_handle_stream_request
 from comet.utils.http_client import http_client_manager
 from comet.utils.network import get_client_ip
-from comet.utils.parsing import parse_optional_int
 
 router = APIRouter()
+_INFO_HASH_PATTERN = re.compile(r"[0-9a-f]{40}")
+_NONNEGATIVE_INTEGER_PATTERN = re.compile(r"0|[1-9][0-9]*")
+
+
+def _parse_optional_path_integer(value: str) -> int | None:
+    if value == "n":
+        return None
+    if type(value) is not str or _NONNEGATIVE_INTEGER_PATTERN.fullmatch(value) is None:
+        raise ValueError("path integer must be canonical, non-negative, or 'n'")
+    return int(value)
+
+
+def _parse_playback_path(
+    info_hash: str,
+    service_index: str,
+    file_index: str,
+    season: str,
+    episode: str,
+) -> tuple[str, int, str, int | None, int | None]:
+    if type(info_hash) is not str or _INFO_HASH_PATTERN.fullmatch(info_hash) is None:
+        raise ValueError("info hash must be 40 lowercase hexadecimal characters")
+    parsed_service_index = _parse_optional_path_integer(service_index)
+    if parsed_service_index is None:
+        raise ValueError("service index is required")
+    parsed_file_index = _parse_optional_path_integer(file_index)
+    return (
+        info_hash,
+        parsed_service_index,
+        "n" if parsed_file_index is None else str(parsed_file_index),
+        _parse_optional_path_integer(season),
+        _parse_optional_path_integer(episode),
+    )
+
+
+def _valid_download_url(value) -> str | None:
+    if type(value) is not str or not value or any(ord(char) < 32 for char in value):
+        return None
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return None
+        parsed.port
+    except (ValueError, UnicodeError):
+        return None
+    return value
 
 
 def _decode_sources(sources_json) -> list[str]:
@@ -105,7 +151,8 @@ async def _cache_download_link_safely(**kwargs) -> None:
     except Exception as exc:
         logger.warning(
             "Failed to cache generated download link for "
-            f"{kwargs['debrid_service']}:{kwargs['info_hash']}: {exc}"
+            f"{kwargs['debrid_service']}:{kwargs['info_hash']} "
+            f"({type(exc).__name__})"
         )
 
 
@@ -143,13 +190,22 @@ async def playback(
             default_key="BAD_REQUEST",
         )
 
-    parsed_service_index = parse_optional_int(service_index)
-    season = parse_optional_int(season)
-    episode = parse_optional_int(episode)
-
-    debrid_service, debrid_api_key = get_debrid_credentials(
-        config, parsed_service_index
-    )
+    try:
+        hash, parsed_service_index, index, season, episode = _parse_playback_path(
+            hash,
+            service_index,
+            index,
+            season,
+            episode,
+        )
+        debrid_service, debrid_api_key = get_debrid_credentials(
+            config, parsed_service_index
+        )
+    except ValueError:
+        return build_status_video_response(
+            ["BAD_REQUEST"],
+            default_key="BAD_REQUEST",
+        )
     account_key_hash = build_account_key_hash(debrid_api_key)
 
     session = await http_client_manager.get_session()
@@ -177,7 +233,7 @@ async def playback(
 
     download_url = None
     if cached_link:
-        download_url = cached_link["download_url"]
+        download_url = _valid_download_url(cached_link["download_url"])
 
     ip = get_client_ip(request)
     should_proxy = (
@@ -283,6 +339,12 @@ async def playback(
             return build_status_video_response(
                 [],
                 default_key="UNKNOWN",
+            )
+        download_url = _valid_download_url(download_url)
+        if download_url is None:
+            return build_status_video_response(
+                ["BAD_REQUEST"],
+                default_key="BAD_REQUEST",
             )
 
         await _cache_download_link_safely(
