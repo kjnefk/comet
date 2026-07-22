@@ -145,6 +145,17 @@ class CometNetService(CometNetBackend):
         self._check_torrents_exist_callback = callback
 
     async def start(self) -> None:
+        """Start CometNet and clean any partially initialized resources on failure."""
+        try:
+            await self._start()
+        except BaseException:
+            try:
+                await self._shutdown(save_state=False, force=True)
+            except BaseException as cleanup_error:
+                logger.warning(f"Failed to clean partial CometNet startup: {cleanup_error}")
+            raise
+
+    async def _start(self) -> None:
         """Start the CometNet service."""
         if not self.enabled:
             logger.log("COMETNET", "CometNet is disabled")
@@ -498,7 +509,10 @@ class CometNetService(CometNetBackend):
 
     async def stop(self) -> None:
         """Stop the CometNet service."""
-        if not self._running:
+        await self._shutdown(save_state=True)
+
+    async def _shutdown(self, *, save_state: bool, force: bool = False) -> None:
+        if not self._running and not force:
             return
 
         logger.log("COMETNET", "Stopping CometNet...")
@@ -516,12 +530,13 @@ class CometNetService(CometNetBackend):
 
         await self._stop_background_tasks()
 
-        # Save state before stopping
-        await self._save_state()
+        if save_state:
+            # Save state before stopping
+            await self._save_state()
 
-        # Save pools data
-        if self.pool_store:
-            await self.pool_store.save()
+            # Save pools data
+            if self.pool_store:
+                await self.pool_store.save()
 
         # Stop components in reverse order
         if self.gossip:
