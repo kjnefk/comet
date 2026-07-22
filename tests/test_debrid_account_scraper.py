@@ -160,3 +160,32 @@ class DebridAccountTaskTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(realdebrid_started.is_set())
         self.assertTrue(alldebrid_started.is_set())
+
+    async def test_refresh_state_reads_start_concurrently(self):
+        realdebrid_started = asyncio.Event()
+        alldebrid_started = asyncio.Event()
+
+        async def fetch_one(query, params, force_primary):
+            del query, force_primary
+            if params["debrid_service"] == "realdebrid":
+                realdebrid_started.set()
+                await alldebrid_started.wait()
+            else:
+                alldebrid_started.set()
+                await realdebrid_started.wait()
+            return {"last_sync_at": account_scraper.time.time()}
+
+        entries = [
+            {"service": "realdebrid", "apiKey": "first"},
+            {"service": "alldebrid", "apiKey": "second"},
+        ]
+        with patch.object(account_scraper.database, "fetch_one", new=fetch_one):
+            await asyncio.wait_for(
+                account_scraper.schedule_account_snapshot_refresh(
+                    object(), object(), entries, "127.0.0.1"
+                ),
+                timeout=1,
+            )
+
+        self.assertTrue(realdebrid_started.is_set())
+        self.assertTrue(alldebrid_started.is_set())

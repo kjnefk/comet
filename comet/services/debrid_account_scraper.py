@@ -522,9 +522,10 @@ async def schedule_account_snapshot_refresh(
     ip: str,
 ):
     now = time.time()
+    accounts = _dedupe_accounts(debrid_entries)
 
-    for service, api_key, account_key_hash in _dedupe_accounts(debrid_entries):
-        row = await database.fetch_one(
+    async def fetch_last_sync(service: str, account_key_hash: str):
+        return await database.fetch_one(
             """
             SELECT last_sync_at
             FROM debrid_account_sync_state
@@ -538,6 +539,14 @@ async def schedule_account_snapshot_refresh(
             force_primary=True,
         )
 
+    last_sync_rows = await asyncio.gather(
+        *(
+            fetch_last_sync(service, account_key_hash)
+            for service, _, account_key_hash in accounts
+        )
+    )
+
+    for (service, api_key, account_key_hash), row in zip(accounts, last_sync_rows):
         if (
             row
             and row["last_sync_at"]
