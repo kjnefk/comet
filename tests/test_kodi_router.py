@@ -59,6 +59,43 @@ router = _load_router()
 
 
 class KodiRouterTests(unittest.TestCase):
+    def test_current_stream_parser_isolates_malformed_entries(self):
+        valid_url = {
+            "name": "Direct",
+            "description": "Ready",
+            "url": "https://example.test/video",
+            "behaviorHints": {},
+        }
+        valid_hash = {
+            "name": "Torrent",
+            "description": "Ready",
+            "infoHash": "a" * 40,
+            "sources": ["tracker:https://tracker.test/announce"],
+        }
+
+        self.assertEqual(
+            router._parse_current_stream(valid_url)["url"], valid_url["url"]
+        )
+        self.assertEqual(
+            router._parse_current_stream(valid_hash)["info_hash"], "a" * 40
+        )
+        for stream in (
+            None,
+            [],
+            {"name": "Missing description", "url": "https://example.test"},
+            {"name": "Bad hints", "description": "x", "url": "x", "behaviorHints": []},
+            {"name": "Bad URL", "description": "x", "url": []},
+            {"name": "Bad hash", "description": "x", "infoHash": "not-a-hash"},
+            {
+                "name": "Bad sources",
+                "description": "x",
+                "infoHash": "b" * 40,
+                "sources": [None],
+            },
+        ):
+            with self.subTest(stream=stream):
+                self.assertIsNone(router._parse_current_stream(stream))
+
     def test_catalog_specs_isolate_malformed_current_records(self):
         manifest = {
             "catalogs": [

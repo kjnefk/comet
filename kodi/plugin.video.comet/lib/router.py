@@ -244,6 +244,54 @@ def _stream_tagline(video_info: dict):
     return " | ".join(part for part in parts if part)
 
 
+def _parse_current_stream(stream):
+    if not isinstance(stream, dict):
+        return None
+
+    name = stream.get("name")
+    description = stream.get("description")
+    behavior_hints = stream.get("behaviorHints", {})
+    if (
+        not isinstance(name, str)
+        or not name
+        or not isinstance(description, str)
+        or not isinstance(behavior_hints, dict)
+    ):
+        return None
+
+    url = stream.get("url")
+    info_hash = stream.get("infoHash")
+    if url is not None:
+        if not isinstance(url, str) or not url:
+            return None
+        info_hash = None
+        sources = []
+    else:
+        if not isinstance(info_hash, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{40}", info_hash
+        ):
+            return None
+        sources = stream.get("sources", [])
+        if not isinstance(sources, list) or not all(
+            isinstance(source, str) for source in sources
+        ):
+            return None
+
+    filename = behavior_hints.get("filename", name)
+    if not isinstance(filename, str) or not filename:
+        filename = name
+
+    return {
+        "name": name,
+        "description": description,
+        "behavior_hints": behavior_hints,
+        "url": url,
+        "info_hash": info_hash,
+        "sources": sources,
+        "filename": filename,
+    }
+
+
 def _add_directory_items(items: list, total_items: Optional[int] = None):
     if not items:
         return
@@ -619,14 +667,17 @@ def get_streams(params):
     is_imdb = imdb_id.startswith("tt")
 
     stream_items = []
-    stream_count = len(streams)
     elementum_available = None
     elementum_warning_sent = False
 
     for stream in streams:
-        stream_name = stream["name"]
-        stream_description = stream["description"]
-        behavior_hints = stream.get("behaviorHints", {})
+        parsed_stream = _parse_current_stream(stream)
+        if parsed_stream is None:
+            continue
+
+        stream_name = parsed_stream["name"]
+        stream_description = parsed_stream["description"]
+        behavior_hints = parsed_stream["behavior_hints"]
         video_info = parse_stream_info(stream_name, stream_description, behavior_hints)
         stream_tagline = _stream_tagline(video_info)
 
@@ -663,9 +714,9 @@ def get_streams(params):
         )
         list_item.setProperty("IsPlayable", "true")
 
-        if "url" in stream:
-            resolved_stream_url = stream["url"]
-        elif "infoHash" in stream:
+        if parsed_stream["url"] is not None:
+            resolved_stream_url = parsed_stream["url"]
+        else:
             if elementum_available is None:
                 elementum_available = is_elementum_installed_and_enabled()
             if not elementum_available:
@@ -675,17 +726,14 @@ def get_streams(params):
                 continue
 
             magnet_link = convert_info_hash_to_magnet(
-                stream["infoHash"],
-                stream.get("sources", []),
-                behavior_hints.get("filename", stream_name),
+                parsed_stream["info_hash"],
+                parsed_stream["sources"],
+                parsed_stream["filename"],
             )
             resolved_stream_url = (
                 "plugin://plugin.video.elementum/play?uri="
                 + parse.quote_plus(magnet_link)
             )
-        else:
-            continue
-
         playback_params = {"video_url": resolved_stream_url}
         if is_imdb:
             playback_params["imdb"] = imdb_id
@@ -697,7 +745,7 @@ def get_streams(params):
             (build_url("play_video", **playback_params), list_item, False)
         )
 
-    _add_directory_items(stream_items, stream_count)
+    _add_directory_items(stream_items)
     xbmcplugin.endOfDirectory(ADDON_HANDLE)
 
 
