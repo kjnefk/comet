@@ -29,6 +29,16 @@ class IndexerManager:
             await self.session.close()
         self.session = None
 
+    async def _fetch_prowlarr_json(self, session, path: str, headers: dict):
+        async with session.get(
+            f"{settings.PROWLARR_URL}{path}",
+            headers=headers,
+            timeout=INDEXER_TIMEOUT,
+        ) as response:
+            if response.status != 200:
+                return response.status, None
+            return response.status, await response.json()
+
     async def update_jackett(self):
         try:
             if (
@@ -103,35 +113,25 @@ class IndexerManager:
                 session = await self.get_session()
                 headers = {"X-Api-Key": settings.PROWLARR_API_KEY}
 
-                indexers_task = session.get(
-                    f"{settings.PROWLARR_URL}/api/v1/indexer",
-                    headers=headers,
-                    timeout=INDEXER_TIMEOUT,
-                )
-                statuses_task = session.get(
-                    f"{settings.PROWLARR_URL}/api/v1/indexerstatus",
-                    headers=headers,
-                    timeout=INDEXER_TIMEOUT,
-                )
-
                 responses = await asyncio.gather(
-                    indexers_task, statuses_task, return_exceptions=True
+                    self._fetch_prowlarr_json(session, "/api/v1/indexer", headers),
+                    self._fetch_prowlarr_json(
+                        session, "/api/v1/indexerstatus", headers
+                    ),
+                    return_exceptions=True,
                 )
 
                 if any(isinstance(r, Exception) for r in responses):
                     logger.warning("Failed to fetch Prowlarr indexers or statuses")
                     return
 
-                resp_idx, resp_stat = responses
+                (indexers_status, indexers), (statuses_status, statuses) = responses
 
-                if resp_idx.status != 200 or resp_stat.status != 200:
+                if indexers_status != 200 or statuses_status != 200:
                     logger.warning(
-                        f"Prowlarr error: Indexers {resp_idx.status}, Status {resp_stat.status}"
+                        f"Prowlarr error: Indexers {indexers_status}, Status {statuses_status}"
                     )
                     return
-
-                indexers = await resp_idx.json()
-                statuses = await resp_stat.json()
 
                 status_map = {s["indexerId"]: s for s in statuses}
                 active_ids = []
