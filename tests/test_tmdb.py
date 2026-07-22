@@ -1,6 +1,36 @@
 import unittest
 
-from comet.metadata.tmdb import _extract_tmdb_id, _extract_upcoming_release_date
+from comet.metadata.tmdb import (
+    TMDBApi,
+    _extract_title_aliases,
+    _extract_tmdb_id,
+    _extract_upcoming_release_date,
+)
+
+
+class _Response:
+    def __init__(self, status, payload):
+        self.status = status
+        self.payload = payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def json(self):
+        return self.payload
+
+
+class _Session:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.requests = []
+
+    def get(self, url, headers):
+        self.requests.append((url, headers))
+        return self.responses.pop(0)
 
 
 class TmdbMetadataTests(unittest.TestCase):
@@ -11,7 +41,32 @@ class TmdbMetadataTests(unittest.TestCase):
         }
 
         self.assertEqual(_extract_tmdb_id(payload), "456")
+        self.assertEqual(_extract_tmdb_id(payload, "series"), "456")
+        self.assertIsNone(_extract_tmdb_id(payload, "movie"))
         self.assertIsNone(_extract_tmdb_id([]))
+
+    def test_title_aliases_are_normalized_and_deduplicated_in_provider_order(self):
+        payload = {
+            "titles": [
+                {"title": " First ", "iso_3166_1": "US"},
+                None,
+                {"title": "Second", "iso_3166_1": "us"},
+                {"title": "First", "iso_3166_1": "US"},
+                {"title": "Fallback", "iso_3166_1": "United States"},
+                {"title": "Non-ASCII", "iso_3166_1": "ÉÉ"},
+                {"title": " ", "iso_3166_1": "GB"},
+                {"title": 123, "iso_3166_1": "GB"},
+            ]
+        }
+
+        self.assertEqual(
+            _extract_title_aliases(payload, "titles"),
+            {
+                "us": ["First", "Second"],
+                "ez": ["Fallback", "Non-ASCII"],
+            },
+        )
+        self.assertEqual(_extract_title_aliases({"titles": {}}, "titles"), {})
 
     def test_release_date_extractor_keeps_valid_current_entries(self):
         payload = {
@@ -32,3 +87,33 @@ class TmdbMetadataTests(unittest.TestCase):
 
         self.assertEqual(_extract_upcoming_release_date(payload), "2026-06-01")
         self.assertIsNone(_extract_upcoming_release_date({"results": {}}))
+
+
+class TmdbApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_title_alias_lookup_uses_typed_find_result_and_tv_endpoint(self):
+        session = _Session(
+            _Response(
+                200,
+                {
+                    "movie_results": [{"id": 123}],
+                    "tv_results": [{"id": 456}],
+                },
+            ),
+            _Response(
+                200,
+                {"results": [{"title": "La casa de papel", "iso_3166_1": "ES"}]},
+            ),
+        )
+
+        aliases = await TMDBApi(session).get_title_aliases("series", "tt6468322")
+
+        self.assertEqual(aliases, {"es": ["La casa de papel"]})
+        self.assertTrue(session.requests[0][0].endswith("external_source=imdb_id"))
+        self.assertTrue(session.requests[1][0].endswith("tv/456/alternative_titles"))
+
+    async def test_title_alias_lookup_reports_provider_failure(self):
+        session = _Session(_Response(503, {"status_message": "unavailable"}))
+
+        aliases = await TMDBApi(session).get_title_aliases("movie", "tt0133093")
+
+        self.assertIsNone(aliases)

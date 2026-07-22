@@ -7,6 +7,19 @@ from comet.core.models import settings
 
 DEFAULT_TMDB_READ_ACCESS_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlNTkxMmVmOWFhM2IxNzg2Zjk3ZTE1NWY1YmQ3ZjY1MSIsInN1YiI6IjY1M2NjNWUyZTg5NGE2MDBmZjE2N2FmYyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.xrIXsMFJpI1o1j5g2QpQcFP1X3AfRjFA5FlBFO5Naw8"
 
+_MEDIA_CONFIG = {
+    "movie": {
+        "path": "movie",
+        "find_results": "movie_results",
+        "alias_results": "titles",
+    },
+    "series": {
+        "path": "tv",
+        "find_results": "tv_results",
+        "alias_results": "results",
+    },
+}
+
 
 def _extract_upcoming_release_date(payload) -> str | None:
     if not isinstance(payload, dict):
@@ -38,11 +51,19 @@ def _extract_upcoming_release_date(payload) -> str | None:
     return min(release_dates) if release_dates else None
 
 
-def _extract_tmdb_id(payload) -> str | None:
+def _extract_tmdb_id(payload, media_type: str | None = None) -> str | None:
     if not isinstance(payload, dict):
         return None
 
-    for result_key in ("movie_results", "tv_results"):
+    if media_type is None:
+        result_keys = ("movie_results", "tv_results")
+    else:
+        config = _MEDIA_CONFIG.get(media_type)
+        if config is None:
+            return None
+        result_keys = (config["find_results"],)
+
+    for result_key in result_keys:
         results = payload.get(result_key)
         if not isinstance(results, list):
             continue
@@ -57,71 +78,117 @@ def _extract_tmdb_id(payload) -> str | None:
     return None
 
 
+def _extract_title_aliases(payload, result_key: str) -> dict[str, list[str]]:
+    if not isinstance(payload, dict):
+        return {}
+
+    entries = payload.get(result_key)
+    if not isinstance(entries, list):
+        return {}
+
+    aliases: dict[str, list[str]] = {}
+    seen: dict[str, set[str]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+
+        raw_title = entry.get("title")
+        if not isinstance(raw_title, str) or not (title := raw_title.strip()):
+            continue
+
+        raw_country = entry.get("iso_3166_1")
+        country = (
+            raw_country.lower()
+            if isinstance(raw_country, str)
+            and len(raw_country) == 2
+            and raw_country.isascii()
+            and raw_country.isalpha()
+            else "ez"
+        )
+        country_seen = seen.setdefault(country, set())
+        if title in country_seen:
+            continue
+        country_seen.add(title)
+        aliases.setdefault(country, []).append(title)
+
+    return aliases
+
+
 class TMDBApi:
     def __init__(self, session: aiohttp.ClientSession):
         self.session = session
         self.base_url = "https://api.themoviedb.org/3"
         self.headers = {
             "Authorization": f"Bearer {settings.TMDB_READ_ACCESS_TOKEN if settings.TMDB_READ_ACCESS_TOKEN else DEFAULT_TMDB_READ_ACCESS_TOKEN}",
-            "Content-Type": "application/json",
+            "Accept": "application/json",
         }
 
-    async def get_upcoming_movie_release_date(self, tmdb_id: str):
+    async def _get_json(self, path: str, context: str):
         try:
-            url = f"{self.base_url}/movie/{tmdb_id}/release_dates"
-            async with self.session.get(url, headers=self.headers) as response:
+            async with self.session.get(
+                f"{self.base_url}/{path}", headers=self.headers
+            ) as response:
                 if response.status != 200:
-                    return None
-
-                data = await response.json()
-
-            return _extract_upcoming_release_date(data)
-        except Exception as e:
-            logger.error(f"TMDB: Error getting movie release date for {tmdb_id}: {e}")
-            return None
-
-    async def get_episode_air_date(self, tmdb_id: str, season: int, episode: int):
-        try:
-            url = f"{self.base_url}/tv/{tmdb_id}/season/{season}/episode/{episode}"
-            async with self.session.get(url, headers=self.headers) as response:
-                if response.status != 200:
-                    return None
-
-                data = await response.json()
-                return data.get("air_date")
-        except Exception as e:
-            logger.error(
-                f"TMDB: Error getting episode air date for {tmdb_id} S{season}E{episode}: {e}"
-            )
-            return None
-
-    async def get_tmdb_id_from_imdb(self, imdb_id: str):
-        try:
-            url = f"{self.base_url}/find/{imdb_id}?external_source=imdb_id"
-            async with self.session.get(url, headers=self.headers) as response:
-                if response.status != 200:
-                    text = await response.text()
-                    logger.error(
-                        f"TMDB: Failed to get TMDB ID from IMDB ID {imdb_id}: {text}"
+                    logger.warning(
+                        f"TMDB: {context} failed with HTTP {response.status}"
                     )
                     return None
-
-                data = await response.json()
-
-            return _extract_tmdb_id(data)
-        except Exception as e:
-            logger.error(f"TMDB: Error converting IMDB ID {imdb_id}: {e}")
+                return await response.json()
+        except Exception as exc:
+            logger.error(f"TMDB: {context} failed: {exc}")
             return None
+
+    async def get_upcoming_movie_release_date(self, tmdb_id: str):
+        data = await self._get_json(
+            f"movie/{tmdb_id}/release_dates",
+            f"movie release dates lookup for {tmdb_id}",
+        )
+        return _extract_upcoming_release_date(data)
+
+    async def get_episode_air_date(self, tmdb_id: str, season: int, episode: int):
+        data = await self._get_json(
+            f"tv/{tmdb_id}/season/{season}/episode/{episode}",
+            f"episode lookup for {tmdb_id} S{season}E{episode}",
+        )
+        if not isinstance(data, dict):
+            return None
+        air_date = data.get("air_date")
+        return air_date if isinstance(air_date, str) else None
+
+    async def get_tmdb_id_from_imdb(self, imdb_id: str, media_type: str | None = None):
+        data = await self._get_json(
+            f"find/{imdb_id}?external_source=imdb_id",
+            f"IMDb ID lookup for {imdb_id}",
+        )
+        return _extract_tmdb_id(data, media_type)
+
+    async def get_title_aliases(self, media_type: str, imdb_id: str):
+        config = _MEDIA_CONFIG.get(media_type)
+        if config is None:
+            return None
+
+        tmdb_id = await self.get_tmdb_id_from_imdb(imdb_id, media_type)
+        if tmdb_id is None:
+            return None
+
+        data = await self._get_json(
+            f"{config['path']}/{tmdb_id}/alternative_titles",
+            f"title aliases lookup for {imdb_id}",
+        )
+        if data is None:
+            return None
+        if not isinstance(data, dict) or not isinstance(
+            data.get(config["alias_results"]), list
+        ):
+            logger.warning(f"TMDB: invalid title aliases response for {imdb_id}")
+            return None
+        return _extract_title_aliases(data, config["alias_results"])
 
     async def has_watch_providers(self, tmdb_id: str):
-        try:
-            url = f"{self.base_url}/movie/{tmdb_id}/watch/providers"
-            async with self.session.get(url, headers=self.headers) as response:
-                if response.status != 200:
-                    return None
-
-                data = await response.json()
-                return bool(data.get("results"))
-        except Exception as e:
-            logger.error(f"TMDB: Error getting watch providers for {tmdb_id}: {e}")
+        data = await self._get_json(
+            f"movie/{tmdb_id}/watch/providers",
+            f"watch providers lookup for {tmdb_id}",
+        )
+        if not isinstance(data, dict):
             return None
+        return bool(data.get("results"))

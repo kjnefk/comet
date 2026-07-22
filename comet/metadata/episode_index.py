@@ -217,7 +217,7 @@ class EpisodeIndexService:
     ) -> str | None:
         try:
             tmdb = TMDBApi(self.session)
-            tmdb_id = await tmdb.get_tmdb_id_from_imdb(series_id)
+            tmdb_id = await tmdb.get_tmdb_id_from_imdb(series_id, "series")
             if not tmdb_id:
                 return None
 

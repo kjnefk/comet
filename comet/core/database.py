@@ -687,10 +687,18 @@ async def _perform_startup_cleanup(current_time: float):
         SET title = NULL,
             year = NULL,
             year_end = NULL,
-            aliases_json = NULL,
             metadata_updated_at = NULL
         WHERE metadata_updated_at IS NOT NULL
           AND metadata_updated_at < :metadata_cutoff
+        """,
+        {"metadata_cutoff": metadata_cutoff},
+    )
+    await database.execute(
+        """
+        UPDATE media_metadata_cache
+        SET aliases_updated_at = NULL
+        WHERE aliases_updated_at IS NOT NULL
+          AND aliases_updated_at < :metadata_cutoff
         """,
         {"metadata_cutoff": metadata_cutoff},
     )

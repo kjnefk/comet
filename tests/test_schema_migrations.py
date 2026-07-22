@@ -1,18 +1,93 @@
 import unittest
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock
 
+from databases import Database
+
+from comet.core.db_router import ReplicaAwareDatabase
 from comet.core.schema_migrations import (
     MigrationContext,
     _add_column_if_missing,
     _column_exists,
     _drop_column_if_exists,
     _ensure_managed_table,
+    _migration_tmdb_title_aliases,
     _rename_column_if_missing,
 )
 from comet.core.schema_specs import ManagedTableSpec
 
 
 class SchemaMigrationMetadataCacheTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tmdb_alias_migration_invalidates_only_imdb_aliases(self):
+        with TemporaryDirectory() as temp_dir:
+            database = ReplicaAwareDatabase(
+                Database(f"sqlite+aiosqlite:///{temp_dir}/migration.db")
+            )
+            await database.connect()
+            try:
+                await database.execute(
+                    """
+                    CREATE TABLE media_metadata_cache (
+                        media_id TEXT PRIMARY KEY,
+                        title TEXT,
+                        year INTEGER,
+                        year_end INTEGER,
+                        aliases_json TEXT,
+                        metadata_updated_at REAL,
+                        aliases_updated_at REAL,
+                        release_date BIGINT,
+                        release_updated_at REAL
+                    )
+                    """
+                )
+                await database.execute_many(
+                    """
+                    INSERT INTO media_metadata_cache (
+                        media_id,
+                        aliases_json,
+                        aliases_updated_at
+                    ) VALUES (
+                        :media_id,
+                        :aliases_json,
+                        :aliases_updated_at
+                    )
+                    """,
+                    [
+                        {
+                            "media_id": "imdb:tt123",
+                            "aliases_json": '{"us":["Old"]}',
+                            "aliases_updated_at": 123.0,
+                        },
+                        {
+                            "media_id": "kitsu:123",
+                            "aliases_json": '{"ez":["Anime"]}',
+                            "aliases_updated_at": 123.0,
+                        },
+                    ],
+                )
+                context = MigrationContext(
+                    database,
+                    is_sqlite=True,
+                    is_postgres=False,
+                )
+
+                await _migration_tmdb_title_aliases(context)
+
+                rows = await database.fetch_all(
+                    """
+                    SELECT media_id, aliases_json, aliases_updated_at
+                    FROM media_metadata_cache
+                    ORDER BY media_id
+                    """
+                )
+                self.assertEqual(rows[0]["media_id"], "imdb:tt123")
+                self.assertEqual(rows[0]["aliases_json"], '{"us":["Old"]}')
+                self.assertIsNone(rows[0]["aliases_updated_at"])
+                self.assertEqual(rows[1]["media_id"], "kitsu:123")
+                self.assertEqual(rows[1]["aliases_updated_at"], 123.0)
+            finally:
+                await database.disconnect()
+
     async def test_column_metadata_is_loaded_once_per_table(self):
         database = AsyncMock()
         database.fetch_one.return_value = {"exists": 1}

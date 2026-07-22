@@ -645,7 +645,8 @@ async def _migration_backfill_canonical_tables(ctx: MigrationContext):
                 year,
                 year_end,
                 aliases_json,
-                metadata_updated_at
+                metadata_updated_at,
+                aliases_updated_at
             )
             SELECT
                 media_id,
@@ -653,7 +654,8 @@ async def _migration_backfill_canonical_tables(ctx: MigrationContext):
                 year,
                 year_end,
                 {aliases_select} AS aliases_json,
-                timestamp AS metadata_updated_at
+                timestamp AS metadata_updated_at,
+                timestamp AS aliases_updated_at
             FROM metadata_cache
             WHERE 1=1
             ON CONFLICT (media_id) DO UPDATE SET
@@ -661,7 +663,8 @@ async def _migration_backfill_canonical_tables(ctx: MigrationContext):
                 year = EXCLUDED.year,
                 year_end = EXCLUDED.year_end,
                 aliases_json = EXCLUDED.aliases_json,
-                metadata_updated_at = EXCLUDED.metadata_updated_at
+                metadata_updated_at = EXCLUDED.metadata_updated_at,
+                aliases_updated_at = EXCLUDED.aliases_updated_at
             """
         )
 
@@ -948,6 +951,19 @@ async def _migration_series_episode_index_refresh(ctx: MigrationContext):
     return True
 
 
+async def _migration_tmdb_title_aliases(ctx: MigrationContext):
+    await _ensure_managed_table(ctx, MEDIA_METADATA_CACHE_TABLE_SPEC)
+    await ctx.database.execute(
+        """
+        UPDATE media_metadata_cache
+        SET aliases_updated_at = NULL
+        WHERE media_id LIKE :imdb_prefix
+        """,
+        {"imdb_prefix": "imdb:%"},
+    )
+    return True
+
+
 MIGRATIONS = [
     ("2026030901_foundation", _migration_foundation),
     ("2026030902_backfill_canonical_tables", _migration_backfill_canonical_tables),
@@ -960,4 +976,5 @@ MIGRATIONS = [
         "2026031602_series_episode_index_refresh",
         _migration_series_episode_index_refresh,
     ),
+    ("2026072201_tmdb_title_aliases", _migration_tmdb_title_aliases),
 ]
