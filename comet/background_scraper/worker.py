@@ -905,7 +905,12 @@ class BackgroundScraperWorker:
     ):
         media_id = media_item.get("imdb_id") or media_item.get("id")
         title = media_item.get("name") or media_item.get("title")
-        if not media_id or not title:
+        if (
+            type(media_id) is not str
+            or not media_id
+            or type(title) is not str
+            or not title
+        ):
             return None
 
         year_source = media_item.get("year") or media_item.get("releaseInfo")
@@ -931,7 +936,11 @@ class BackgroundScraperWorker:
     ) -> float:
         rating_raw = media_item.get("imdbRating") or 0
         try:
+            if type(rating_raw) is bool:
+                raise TypeError
             rating = float(rating_raw)
+            if not math.isfinite(rating) or not 0 <= rating <= 10:
+                rating = 0.0
         except (TypeError, ValueError):
             rating = 0.0
 
@@ -939,12 +948,14 @@ class BackgroundScraperWorker:
         if isinstance(votes_raw, str):
             votes_raw = votes_raw.replace(",", "")
         try:
-            votes = int(votes_raw)
-        except (TypeError, ValueError):
+            votes = int(votes_raw) if type(votes_raw) in (int, str) else 0
+            if votes < 0:
+                votes = 0
+        except (TypeError, ValueError, OverflowError):
             votes = 0
 
         recency_bonus = max(0.0, 12.0 - (current_year - year))
-        votes_bonus = min(votes / 50000.0, 4.0)
+        votes_bonus = 4.0 if votes >= 200000 else votes / 50000.0
         type_bonus = 1.5 if media_type == "series" else 0.0
 
         return round((rating * 10.0) + recency_bonus + votes_bonus + type_bonus, 4)
