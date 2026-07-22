@@ -165,64 +165,63 @@ class StremThru:
         return True, season, episode, target_air_date
 
     async def _post_store_json(self, endpoint: str, payload: dict, action: str) -> dict:
-        response = await self.session.post(
+        async with self.session.post(
             f"{self.base_url}{endpoint}",
             json=payload,
             headers=self._headers(),
-        )
+        ) as response:
+            try:
+                data = await response.json(content_type=None)
+            except Exception as exc:
+                raise DebridLinkGenerationError(
+                    self.store_name,
+                    f"{self.store_name}: Failed to {action}.",
+                    payload={
+                        "status_code": response.status,
+                        "raw": await response.text(),
+                    },
+                ) from exc
 
-        try:
-            data = await response.json(content_type=None)
-        except Exception as exc:
+            if isinstance(data, dict):
+                error = data.get("error")
+                if isinstance(error, dict):
+                    upstream = error.get("__upstream_cause__")
+                    message = error.get("message")
+                    if not message and isinstance(upstream, dict):
+                        message = upstream.get("detail") or upstream.get("message")
+
+                    raise DebridLinkGenerationError(
+                        self.store_name,
+                        message or f"{self.store_name}: Failed to {action}.",
+                        error_code=error.get("code"),
+                        upstream_error_code=self._extract_upstream_error_code(upstream),
+                        payload=data,
+                    )
+                elif error:
+                    raise DebridLinkGenerationError(
+                        self.store_name,
+                        str(error)
+                        if isinstance(error, str)
+                        else f"{self.store_name}: Failed to {action}.",
+                        payload=data,
+                    )
+
+                if response.status < 400:
+                    return data
+
             raise DebridLinkGenerationError(
                 self.store_name,
                 f"{self.store_name}: Failed to {action}.",
-                payload={
-                    "status_code": response.status,
-                    "raw": await response.text(),
-                },
-            ) from exc
-
-        if isinstance(data, dict):
-            error = data.get("error")
-            if isinstance(error, dict):
-                upstream = error.get("__upstream_cause__")
-                message = error.get("message")
-                if not message and isinstance(upstream, dict):
-                    message = upstream.get("detail") or upstream.get("message")
-
-                raise DebridLinkGenerationError(
-                    self.store_name,
-                    message or f"{self.store_name}: Failed to {action}.",
-                    error_code=error.get("code"),
-                    upstream_error_code=self._extract_upstream_error_code(upstream),
-                    payload=data,
-                )
-            elif error:
-                raise DebridLinkGenerationError(
-                    self.store_name,
-                    str(error)
-                    if isinstance(error, str)
-                    else f"{self.store_name}: Failed to {action}.",
-                    payload=data,
-                )
-
-            if response.status < 400:
-                return data
-
-        raise DebridLinkGenerationError(
-            self.store_name,
-            f"{self.store_name}: Failed to {action}.",
-            payload={"response": data, "status_code": response.status},
-        )
+                payload={"response": data, "status_code": response.status},
+            )
 
     async def check_premium(self):
         try:
-            response = await self.session.get(
+            async with self.session.get(
                 f"{self.base_url}/user?client_ip={self.client_ip}",
                 headers=self._headers(),
-            )
-            user = await response.json()
+            ) as response:
+                user = await response.json()
 
             if "data" not in user:
                 raise DebridAuthError(
@@ -246,8 +245,8 @@ class StremThru:
     async def get_instant(self, magnets: list):
         try:
             url = f"{self.base_url}/magnets/check?magnet={','.join(magnets)}&client_ip={self.client_ip}&sid={self.sid}"
-            magnet = await self.session.get(url, headers=self._headers())
-            return await magnet.json()
+            async with self.session.get(url, headers=self._headers()) as response:
+                return await response.json()
         except Exception as e:
             logger.warning(
                 f"Exception while checking hash instant availability on {self.store_name}: {e}"
@@ -255,11 +254,11 @@ class StremThru:
 
     async def list_magnets(self, limit: int = 500, offset: int = 0):
         try:
-            response = await self.session.get(
+            async with self.session.get(
                 f"{self.base_url}/magnets?limit={limit}&offset={offset}&client_ip={self.client_ip}",
                 headers=self._headers(),
-            )
-            payload = await response.json()
+            ) as response:
+                payload = await response.json()
             data = payload["data"]
             return data["items"], int(data["total_items"])
         except Exception as e:
