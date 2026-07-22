@@ -218,7 +218,7 @@ def _normalize_valid_info_hash(info_hash) -> str | None:
 
     normalized_info_hash = normalize_info_hash(info_hash)
 
-    if len(normalized_info_hash) != 40:
+    if re.fullmatch(r"[0-9a-f]{40}", normalized_info_hash) is None:
         return None
     return normalized_info_hash
 

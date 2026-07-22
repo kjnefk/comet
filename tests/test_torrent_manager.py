@@ -10,6 +10,14 @@ from comet.utils.parsing import is_video
 
 
 class TorrentMetadataTests(unittest.TestCase):
+    def test_info_hash_normalization_rejects_non_hexadecimal_length_match(self):
+        self.assertIsNone(torrent_manager._normalize_valid_info_hash("z" * 40))
+        self.assertIsNone(torrent_manager._normalize_valid_info_hash("a" * 39))
+        self.assertEqual(
+            torrent_manager._normalize_valid_info_hash("A" * 40),
+            "a" * 40,
+        )
+
     def test_extracts_every_tracker_and_uppercase_video_file(self):
         info = {b"name": b"Movie.MKV", b"length": 1234}
         content = bencodepy.encode(
