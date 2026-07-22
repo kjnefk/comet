@@ -100,9 +100,10 @@ def _parse_cache_shard_for(title: str):
 
 
 def _clone_parsed(parsed):
-    if hasattr(parsed, "model_copy"):
-        return parsed.model_copy(deep=True)
-    return parsed.copy(deep=True)
+    # Filtering only mutates languages; keep immutable parse fields shared.
+    clone = parsed.model_copy()
+    clone.languages = list(parsed.languages)
+    return clone
 
 
 def _parse_with_cache(title: str):

@@ -1,9 +1,20 @@
 import unittest
 
-from comet.services.filtering import filter_worker, quick_alias_match
+from RTN import parse
+
+from comet.services.filtering import _clone_parsed, filter_worker, quick_alias_match
 
 
 class AliasFilteringTests(unittest.TestCase):
+    def test_cached_parse_clone_detaches_mutated_languages(self):
+        cached = parse("Movie.2024.MULTI.FRENCH.1080p.WEB-DL")
+        clone = _clone_parsed(cached)
+
+        clone.languages.append("de")
+
+        self.assertNotIn("de", cached.languages)
+        self.assertIn("de", clone.languages)
+
     def test_empty_alias_does_not_match_every_title(self):
         self.assertFalse(quick_alias_match("unrelated title", [""]))
 
