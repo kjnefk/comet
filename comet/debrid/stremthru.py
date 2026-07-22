@@ -10,7 +10,7 @@ from comet.core.models import settings
 from comet.debrid.exceptions import DebridAuthError, DebridLinkGenerationError
 from comet.metadata.episode_index import EpisodeIndexService
 from comet.services.debrid_cache import schedule_cache_availability
-from comet.services.filtering import quick_alias_match
+from comet.services.filtering import exact_alias_match
 from comet.services.torrent_manager import torrent_update_queue
 from comet.utils.parsing import (
     ensure_multi_language,
@@ -463,9 +463,11 @@ class StremThru:
             torrent_name = unquote(torrent_name)
 
             aliases = aliases or {}
-            ez_aliases = aliases.get("ez", [])
-            if ez_aliases:
-                ez_aliases_normalized = [normalize_title(a) for a in ez_aliases]
+            ez_aliases_normalized = frozenset(
+                normalized
+                for alias in aliases.get("ez", [])
+                if isinstance(alias, str) and (normalized := normalize_title(alias))
+            )
 
             debrid_files = magnet_data.get("files", [])
 
@@ -552,9 +554,9 @@ class StremThru:
 
                 # Title/alias matching
                 if parsed.parsed_title:
-                    # Quick alias match first
-                    if ez_aliases and quick_alias_match(
-                        normalize_title(filename), ez_aliases_normalized
+                    # Exact alias match first
+                    if exact_alias_match(
+                        normalize_title(parsed.parsed_title), ez_aliases_normalized
                     ):
                         score += 50
                         match_reason.append("alias")

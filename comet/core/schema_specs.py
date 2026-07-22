@@ -269,6 +269,9 @@ MEDIA_DEMAND_TABLE_SPEC = ManagedTableSpec(
     ),
 )
 
+DEBRID_ACCOUNT_TRACKER_PREDICATE = "substr(tracker, 1, 14) = 'DebridAccount|'"
+
+
 TORRENTS_TABLE_SPEC = ManagedTableSpec(
     table_name="torrents",
     create_sql="""
@@ -324,6 +327,11 @@ TORRENTS_TABLE_SPEC = ManagedTableSpec(
         """
             CREATE INDEX IF NOT EXISTS idx_torrents_updated_at_v1
             ON {table_name} (updated_at)
+        """,
+        f"""
+            CREATE INDEX IF NOT EXISTS idx_torrents_debrid_account_media_v1
+            ON {{table_name}} (media_id, info_hash)
+            WHERE {DEBRID_ACCOUNT_TRACKER_PREDICATE}
         """,
     ),
 )

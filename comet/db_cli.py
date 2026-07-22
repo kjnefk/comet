@@ -4,10 +4,19 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+import aiohttp
+
 from comet.core.database import setup_database
 from comet.core.db_manager import DatabaseManager
 from comet.core.logger import logger
 from comet.core.models import database
+from comet.core.schema_specs import DEBRID_ACCOUNT_TRACKER_PREDICATE
+from comet.metadata.manager import MetadataScraper
+from comet.metadata.tmdb import TMDBApi
+from comet.services.debrid_account_cache_cleanup import (
+    DEFAULT_CLEANUP_BATCH_SIZE,
+    repair_debrid_account_cache_for_media,
+)
 
 
 async def list_tables_command(db_manager: DatabaseManager):
@@ -161,9 +170,134 @@ def parse_table_list(table_str: str):
     return [table.strip() for table in table_str.split(",") if table.strip()]
 
 
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+async def _get_debrid_account_cleanup_candidates(
+    media_ids: list[str] | None, min_rows: int, limit: int | None
+):
+    if media_ids:
+        return [(media_id, None) for media_id in dict.fromkeys(media_ids)]
+
+    limit_sql = "LIMIT :limit" if limit is not None else ""
+    params = {"min_rows": min_rows}
+    if limit is not None:
+        params["limit"] = limit
+
+    rows = await database.fetch_all(
+        f"""
+        SELECT media_id, COUNT(*) AS row_count
+        FROM torrents
+        WHERE {DEBRID_ACCOUNT_TRACKER_PREDICATE}
+        GROUP BY media_id
+        HAVING COUNT(*) >= :min_rows
+        ORDER BY row_count DESC, media_id
+        {limit_sql}
+        """,
+        params,
+        force_primary=True,
+    )
+    return [(row["media_id"], int(row["row_count"])) for row in rows]
+
+
+async def cleanup_debrid_account_command(
+    *,
+    media_ids: list[str] | None,
+    media_type: str | None,
+    min_rows: int,
+    limit: int | None,
+    batch_size: int,
+    apply: bool,
+):
+    candidates = await _get_debrid_account_cleanup_candidates(
+        media_ids, min_rows, limit
+    )
+    action = "APPLY" if apply else "DRY RUN"
+    print(f"\nDebridAccount cache cleanup ({action}): {len(candidates):,} media items")
+    if not apply:
+        print(
+            "No rows will be deleted. Re-run with --apply after reviewing the report."
+        )
+
+    totals = {
+        "scanned": 0,
+        "matched": 0,
+        "invalid": 0,
+        "invalid_rows": 0,
+        "unverifiable": 0,
+        "skipped": 0,
+    }
+    async with aiohttp.ClientSession() as session:
+        metadata_scraper = MetadataScraper(session)
+        tmdb = TMDBApi(session)
+        for index, (media_id, known_rows) in enumerate(candidates, 1):
+            resolved_type = media_type
+            if resolved_type is None:
+                if media_id.startswith("tt"):
+                    resolved_type = await tmdb.get_media_type_from_imdb(media_id)
+
+            if resolved_type is None:
+                totals["skipped"] += 1
+                print(
+                    f"[{index}/{len(candidates)}] {media_id}: skipped (unknown media type)"
+                )
+                continue
+
+            metadata_id = (
+                media_id.partition(":")[2]
+                if media_id.startswith("kitsu:")
+                else media_id
+            )
+            metadata, aliases = await metadata_scraper.fetch_metadata_and_aliases(
+                resolved_type, media_id, id=metadata_id
+            )
+            if metadata is None:
+                totals["skipped"] += 1
+                print(
+                    f"[{index}/{len(candidates)}] {media_id}: skipped (metadata unavailable)"
+                )
+                continue
+
+            stats = await repair_debrid_account_cache_for_media(
+                media_id=media_id,
+                media_type=resolved_type,
+                title=metadata["title"],
+                year=metadata["year"],
+                year_end=metadata["year_end"],
+                aliases=aliases,
+                apply=apply,
+                batch_size=batch_size,
+            )
+            totals["scanned"] += stats.scanned_hashes
+            totals["matched"] += stats.matched_hashes
+            totals["invalid"] += stats.invalid_hashes
+            totals["invalid_rows"] += stats.invalid_rows
+            totals["unverifiable"] += stats.unverifiable_hashes
+            source_count = f", source rows={known_rows:,}" if known_rows else ""
+            verb = "removed" if apply else "would remove"
+            print(
+                f"[{index}/{len(candidates)}] {media_id} ({metadata['title']}): "
+                f"hashes={stats.scanned_hashes:,}, valid={stats.matched_hashes:,}, "
+                f"{verb}={stats.invalid_hashes:,} hashes/{stats.invalid_rows:,} rows, "
+                f"unverifiable={stats.unverifiable_hashes:,}{source_count}"
+            )
+
+    verb = "Removed" if apply else "Would remove"
+    print(
+        f"\nScanned {totals['scanned']:,} hashes; retained {totals['matched']:,}; "
+        f"{verb} {totals['invalid']:,} hashes / {totals['invalid_rows']:,} rows; "
+        f"retained {totals['unverifiable']:,} unverifiable hashes; "
+        f"skipped {totals['skipped']:,} media items."
+    )
+
+
 async def main():
     parser = argparse.ArgumentParser(
-        description="Comet Database Import/Export Tool",
+        description="Comet database maintenance tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -184,6 +318,12 @@ Examples:
   
   # Import all tables (parallel disabled for safety)
   python -m comet.db_cli import --input ./backup/ --no-parallel
+
+  # Audit a polluted DebridAccount media cache without deleting rows
+  python -m comet.db_cli cleanup-debrid-account --media-id tt29552248 --media-type movie
+
+  # Apply the reviewed cleanup
+  python -m comet.db_cli cleanup-debrid-account --media-id tt29552248 --media-type movie --apply
         """,
     )
 
@@ -217,6 +357,45 @@ Examples:
     )
     import_parser.add_argument(
         "--no-parallel", action="store_true", help="Disable parallel processing"
+    )
+
+    cleanup_parser = subparsers.add_parser(
+        "cleanup-debrid-account",
+        help="Revalidate and optionally remove invalid DebridAccount torrent associations",
+    )
+    cleanup_parser.add_argument(
+        "--media-id",
+        action="append",
+        dest="media_ids",
+        help="Only clean this media ID (repeatable; default: all candidates)",
+    )
+    cleanup_parser.add_argument(
+        "--media-type",
+        choices=("movie", "series"),
+        help="Force the media type (normally detected from IMDb)",
+    )
+    cleanup_parser.add_argument(
+        "--min-rows",
+        type=positive_int,
+        default=1,
+        help="Only scan media with at least this many DebridAccount rows (default: 1)",
+    )
+    cleanup_parser.add_argument(
+        "--limit", type=positive_int, help="Maximum number of media items to scan"
+    )
+    cleanup_parser.add_argument(
+        "--batch-size",
+        type=positive_int,
+        default=DEFAULT_CLEANUP_BATCH_SIZE,
+        help=(
+            "Distinct hashes validated per DB batch "
+            f"(default: {DEFAULT_CLEANUP_BATCH_SIZE})"
+        ),
+    )
+    cleanup_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Delete invalid associations (default is a non-deleting dry run)",
     )
 
     args = parser.parse_args()
@@ -254,6 +433,16 @@ Examples:
 
             await import_command(
                 db_manager, args.input, table_names, parallel=not args.no_parallel
+            )
+
+        elif args.command == "cleanup-debrid-account":
+            await cleanup_debrid_account_command(
+                media_ids=args.media_ids,
+                media_type=args.media_type,
+                min_rows=args.min_rows,
+                limit=args.limit,
+                batch_size=args.batch_size,
+                apply=args.apply,
             )
 
     except KeyboardInterrupt:

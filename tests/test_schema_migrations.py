@@ -11,6 +11,7 @@ from comet.core.schema_migrations import (
     _column_exists,
     _drop_column_if_exists,
     _ensure_managed_table,
+    _migration_debrid_account_cleanup_index,
     _migration_original_indexer_titles,
     _migration_tmdb_title_aliases,
     _rename_column_if_missing,
@@ -19,6 +20,30 @@ from comet.core.schema_specs import ManagedTableSpec
 
 
 class SchemaMigrationMetadataCacheTests(unittest.IsolatedAsyncioTestCase):
+    async def test_debrid_account_cleanup_migration_creates_partial_index(self):
+        with TemporaryDirectory() as temp_dir:
+            database = ReplicaAwareDatabase(
+                Database(f"sqlite+aiosqlite:///{temp_dir}/migration.db")
+            )
+            await database.connect()
+            try:
+                context = MigrationContext(database, is_sqlite=True, is_postgres=False)
+
+                await _migration_debrid_account_cleanup_index(context)
+
+                row = await database.fetch_one(
+                    """
+                    SELECT sql
+                    FROM sqlite_master
+                    WHERE type = 'index'
+                      AND name = 'idx_torrents_debrid_account_media_v1'
+                    """
+                )
+                self.assertIn("ON torrents (media_id, info_hash)", row["sql"])
+                self.assertIn("substr(tracker, 1, 14) = 'DebridAccount|'", row["sql"])
+            finally:
+                await database.disconnect()
+
     async def test_original_title_migration_invalidates_imdb_and_kitsu_aliases(self):
         with TemporaryDirectory() as temp_dir:
             database = ReplicaAwareDatabase(

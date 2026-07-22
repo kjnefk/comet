@@ -222,12 +222,25 @@ class TMDBApi:
         air_date = data.get("air_date")
         return air_date if isinstance(air_date, str) else None
 
-    async def get_tmdb_id_from_imdb(self, imdb_id: str, media_type: str | None = None):
-        data = await self._get_json(
+    async def _find_from_imdb(self, imdb_id: str):
+        return await self._get_json(
             f"find/{imdb_id}?external_source=imdb_id",
             f"IMDb ID lookup for {imdb_id}",
         )
+
+    async def get_tmdb_id_from_imdb(self, imdb_id: str, media_type: str | None = None):
+        data = await self._find_from_imdb(imdb_id)
         return _extract_tmdb_id(data, media_type)
+
+    async def get_media_type_from_imdb(self, imdb_id: str) -> str | None:
+        data = await self._find_from_imdb(imdb_id)
+        if not isinstance(data, dict):
+            return None
+        if _extract_tmdb_id(data, "movie") is not None:
+            return "movie"
+        if _extract_tmdb_id(data, "series") is not None:
+            return "series"
+        return None
 
     async def get_title_aliases(self, media_type: str, imdb_id: str):
         config = _MEDIA_CONFIG.get(media_type)

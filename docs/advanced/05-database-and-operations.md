@@ -50,8 +50,36 @@ Supported commands:
 - `info --table <name>`
 - `export --output <dir> [--tables ...]`
 - `import --input <dir> [--tables ...]`
+- `cleanup-debrid-account [--media-id ...] [--min-rows ...] [--apply]`
 
 Export/import uses `DatabaseManager` with batched I/O and optional parallel processing.
+
+### Repairing DebridAccount torrent associations
+
+The account scraper cleanup revalidates persisted `DebridAccount|*` torrents with
+the current title, alias, and year matcher. It keeps independently discovered
+rows and conservatively retains hashes whose legacy parse data cannot be
+verified.
+
+Audit the known affected movie first (dry-run is the default):
+
+```bash
+python -m comet.db_cli cleanup-debrid-account \
+  --media-id tt29552248 --media-type movie
+```
+
+Apply the reviewed result:
+
+```bash
+python -m comet.db_cli cleanup-debrid-account \
+  --media-id tt29552248 --media-type movie --apply
+```
+
+To discover and process every affected media ID, omit `--media-id`. Large
+instances can start with the most polluted entries using `--min-rows 1000`
+and/or `--limit`, then lower the threshold. Processing uses keyset pagination
+and bounded delete batches; `--batch-size` tunes the number of distinct hashes
+validated per read.
 
 ## Operational Advice
 

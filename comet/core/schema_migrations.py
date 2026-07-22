@@ -978,6 +978,11 @@ async def _migration_original_indexer_titles(ctx: MigrationContext):
     return True
 
 
+async def _migration_debrid_account_cleanup_index(ctx: MigrationContext):
+    await _ensure_managed_table(ctx, TORRENTS_TABLE_SPEC)
+    return True
+
+
 MIGRATIONS = [
     ("2026030901_foundation", _migration_foundation),
     ("2026030902_backfill_canonical_tables", _migration_backfill_canonical_tables),
@@ -993,4 +998,8 @@ MIGRATIONS = [
     ("2026072201_tmdb_title_aliases", _migration_tmdb_title_aliases),
     ("2026072202_tmdb_localized_titles", _migration_tmdb_title_aliases),
     ("2026072203_original_indexer_titles", _migration_original_indexer_titles),
+    (
+        "2026072204_debrid_account_cleanup_index",
+        _migration_debrid_account_cleanup_index,
+    ),
 ]

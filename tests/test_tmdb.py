@@ -127,6 +127,21 @@ class TmdbMetadataTests(unittest.TestCase):
 
 
 class TmdbApiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_media_type_lookup_ignores_malformed_find_results(self):
+        session = _Session(
+            _Response(
+                200,
+                {
+                    "movie_results": [{"id": True}, {"id": "invalid"}],
+                    "tv_results": [{"id": 456}],
+                },
+            )
+        )
+
+        media_type = await TMDBApi(session).get_media_type_from_imdb("tt6468322")
+
+        self.assertEqual(media_type, "series")
+
     async def test_title_alias_lookup_uses_typed_find_result_and_tv_endpoint(self):
         session = _Session(
             _Response(

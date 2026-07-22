@@ -7,7 +7,7 @@ from comet.services.filtering import (
     _clone_parsed,
     _normalize_aliases,
     filter_worker,
-    quick_alias_match,
+    exact_alias_match,
     settings,
 )
 
@@ -23,7 +23,13 @@ class AliasFilteringTests(unittest.TestCase):
         self.assertIn("de", clone.languages)
 
     def test_empty_alias_does_not_match_every_title(self):
-        self.assertFalse(quick_alias_match("unrelated title", [""]))
+        self.assertFalse(exact_alias_match("unrelated title", [""]))
+
+    def test_short_or_partial_alias_does_not_bypass_title_matching(self):
+        self.assertFalse(exact_alias_match("quality release", ["it"]))
+        self.assertFalse(exact_alias_match("friends swapped places", ["swap"]))
+        self.assertFalse(exact_alias_match("friends swapped places", ["swapped"]))
+        self.assertTrue(exact_alias_match("swapped", ["swapped"]))
 
     def test_alias_normalization_keeps_only_current_unique_entries(self):
         self.assertEqual(
@@ -31,7 +37,7 @@ class AliasFilteringTests(unittest.TestCase):
                 {
                     "": ["Ignored"],
                     "en": "Ignored",
-                    "fr": [None, "", "Titre", "Titre", 1],
+                    "fr": [None, "", "  ", " Titre ", "Titre", 1],
                 }
             ),
             {"fr": ["Titre"]},
