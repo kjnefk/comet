@@ -5,6 +5,8 @@ from comet.scrapers.base import BaseScraper
 from comet.scrapers.models import ScrapeRequest
 from comet.services.anime import anime_mapper
 
+_INVALID_MAGNET_TITLE = "Invalid Magnet"
+
 
 class StremthruScraper(BaseScraper):
     def __init__(self, manager, session, url: str):
@@ -30,6 +32,8 @@ class StremthruScraper(BaseScraper):
             for item in root.findall(".//item"):
                 try:
                     title = item.find("title").text
+                    if title == _INVALID_MAGNET_TITLE:
+                        continue
 
                     size = None
                     info_hash = None
