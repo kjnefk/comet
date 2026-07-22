@@ -1,3 +1,4 @@
+import math
 import time
 from datetime import datetime
 
@@ -100,7 +101,7 @@ class EpisodeIndexService:
         )
         if row is None:
             return None
-        return row["air_date"]
+        return _normalize_air_date(row["air_date"])
 
     async def _is_series_index_fresh(
         self, series_id: str, min_timestamp: float
@@ -109,7 +110,13 @@ class EpisodeIndexService:
             _SERIES_INDEX_LAST_REFRESH_QUERY,
             {"series_id": series_id},
         )
-        return last_refreshed is not None and float(last_refreshed) >= min_timestamp
+        if isinstance(last_refreshed, bool):
+            return False
+        try:
+            refreshed_at = float(last_refreshed)
+        except (TypeError, ValueError):
+            return False
+        return math.isfinite(refreshed_at) and refreshed_at >= min_timestamp
 
     async def _upsert_series_air_dates(self, rows: list[dict]) -> None:
         if not rows:
