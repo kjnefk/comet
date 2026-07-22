@@ -715,12 +715,7 @@ class PoolStore:
         # Sign the invite
         invite.signature = await identity.sign_hex_async(invite.to_signable_bytes())
 
-        # Store invite
-        if pool_id not in self._invites:
-            self._invites[pool_id] = {}
-        self._invites[pool_id][invite.invite_code] = invite
-
-        # Persist
+        # Persist before publishing it to callers.
         await self._save_invite(invite)
 
         logger.log("COMETNET", f"Created invite for pool {pool_id}: {invite.to_link()}")
@@ -728,7 +723,10 @@ class PoolStore:
 
     def get_invites(self, pool_id: str) -> List[PoolInvite]:
         """Get all invites for a pool."""
-        return list(self._invites.get(pool_id, {}).values())
+        return [
+            invite.model_copy(deep=True)
+            for invite in self._invites.get(pool_id, {}).values()
+        ]
 
     async def delete_invite(self, pool_id: str, invite_code: str) -> bool:
         """Delete an invite."""
@@ -737,10 +735,7 @@ class PoolStore:
             pool_inv_dir = self.invites_dir / pool_id
             invite_file = pool_inv_dir / f"{invite_code}.json"
             if invite_file.exists():
-                try:
-                    await run_in_executor(invite_file.unlink)
-                except Exception as e:
-                    logger.warning(f"Failed to delete invite file: {e}")
+                await run_in_executor(invite_file.unlink)
 
             # Delete from memory
             del self._invites[pool_id][invite_code]
@@ -750,7 +745,8 @@ class PoolStore:
 
     def get_invite(self, pool_id: str, invite_code: str) -> Optional[PoolInvite]:
         """Get an invite by pool ID and code."""
-        return self._invites.get(pool_id, {}).get(invite_code)
+        invite = self._invites.get(pool_id, {}).get(invite_code)
+        return invite.model_copy(deep=True) if invite else None
 
     async def use_invite(
         self,
@@ -850,12 +846,7 @@ class PoolStore:
     async def _save_memberships(self) -> None:
         """Save memberships to disk."""
         memberships_file = self.pools_dir / "memberships.json"
-        try:
-            await write_text_atomic(
-                memberships_file, json.dumps(sorted(self._memberships))
-            )
-        except Exception as e:
-            logger.warning(f"Failed to save memberships: {e}")
+        await write_text_atomic(memberships_file, json.dumps(sorted(self._memberships)))
 
     async def _load_subscriptions(self) -> None:
         """Load subscriptions from disk."""
@@ -883,12 +874,9 @@ class PoolStore:
     async def _save_subscriptions(self) -> None:
         """Save subscriptions to disk."""
         subscriptions_file = self.pools_dir / "subscriptions.json"
-        try:
-            await write_text_atomic(
-                subscriptions_file, json.dumps(sorted(self._subscriptions))
-            )
-        except Exception as e:
-            logger.warning(f"Failed to save subscriptions: {e}")
+        await write_text_atomic(
+            subscriptions_file, json.dumps(sorted(self._subscriptions))
+        )
 
     async def _load_invites(self) -> None:
         """Load invites from disk."""
@@ -922,12 +910,10 @@ class PoolStore:
         pool_inv_dir.mkdir(parents=True, exist_ok=True)
 
         invite_file = pool_inv_dir / f"{invite.invite_code}.json"
-        try:
-            await write_text_atomic(
-                invite_file, json.dumps(invite.model_dump(), indent=2)
-            )
-        except Exception as e:
-            logger.warning(f"Failed to save invite: {e}")
+        await write_text_atomic(invite_file, json.dumps(invite.model_dump(), indent=2))
+        self._invites.setdefault(invite.pool_id, {})[invite.invite_code] = (
+            invite.model_copy(deep=True)
+        )
 
     async def _load_pool_peers(self) -> None:
         """Load known pool peers from disk."""
@@ -956,14 +942,8 @@ class PoolStore:
     async def _save_pool_peers(self) -> None:
         """Save known pool peers to disk."""
         peers_file = self.pools_dir / "pool_peers.json"
-        try:
-            # Convert sets to lists for JSON serialization
-            data = {
-                pid: sorted(peers) for pid, peers in sorted(self._pool_peers.items())
-            }
-            await write_text_atomic(peers_file, json.dumps(data, indent=2))
-        except Exception as e:
-            logger.warning(f"Failed to save pool peers: {e}")
+        data = {pid: sorted(peers) for pid, peers in sorted(self._pool_peers.items())}
+        await write_text_atomic(peers_file, json.dumps(data, indent=2))
 
     def add_pool_peer(self, pool_id: str, peer_address: str) -> None:
         """

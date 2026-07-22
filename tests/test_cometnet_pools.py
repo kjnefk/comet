@@ -101,3 +101,54 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
                 [member.public_key for member in manifest.members], ["creator-key"]
             )
             self.assertEqual(manifest.version, 1)
+
+    async def test_failed_invite_store_is_visible_and_not_published(self):
+        class Identity:
+            public_key_hex = "creator-key"
+
+            async def sign_hex_async(self, payload):
+                del payload
+                return "signature"
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._manifest())
+
+            with patch(
+                "comet.cometnet.pools.write_text_atomic",
+                side_effect=OSError("disk unavailable"),
+            ):
+                with self.assertRaisesRegex(OSError, "disk unavailable"):
+                    await store.create_invite("pool-a", Identity())
+
+            self.assertEqual(store.get_invites("pool-a"), [])
+
+    async def test_invite_snapshots_require_an_explicit_successful_save(self):
+        class Identity:
+            public_key_hex = "creator-key"
+
+            async def sign_hex_async(self, payload):
+                del payload
+                return "signature"
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._manifest())
+            created = await store.create_invite("pool-a", Identity(), max_uses=2)
+
+            detached = store.get_invite("pool-a", created.invite_code)
+            detached.uses = 2
+
+            self.assertEqual(store.get_invite("pool-a", created.invite_code).uses, 0)
+
+    async def test_membership_save_failure_propagates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            store._memberships.add("pool-a")
+
+            with patch(
+                "comet.cometnet.pools.write_text_atomic",
+                side_effect=OSError("disk unavailable"),
+            ):
+                with self.assertRaisesRegex(OSError, "disk unavailable"):
+                    await store._save_memberships()
