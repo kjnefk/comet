@@ -124,7 +124,10 @@ class StremThru:
     def _requested_episode_scope(self) -> tuple[str | None, int | None, int | None]:
         if not isinstance(self.sid, str) or ":" not in self.sid:
             return None, None, None
-        series_id, season, episode = parse_media_id("series", self.sid)
+        try:
+            series_id, season, episode = parse_media_id("series", self.sid)
+        except ValueError:
+            return None, None, None
         return series_id, season, episode
 
     @staticmethod

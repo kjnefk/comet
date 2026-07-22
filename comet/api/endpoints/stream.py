@@ -478,8 +478,6 @@ async def stream(
     if "tmdb:" in media_id:
         return _build_stream_response(request, {"streams": []}, is_empty=True)
 
-    media_id = media_id.replace("imdb_id:", "")
-
     config = config_check(b64config, strict_b64config=True)
     if not config:
         error_response = {
@@ -527,7 +525,10 @@ async def stream(
     session = await http_client_manager.get_session()
     metadata_scraper = MetadataScraper(session)
 
-    id, season, episode = parse_media_id(media_type, media_id)
+    try:
+        id, season, episode = parse_media_id(media_type, media_id)
+    except ValueError:
+        return _stream_response({"streams": []}, is_empty=True)
 
     if settings.DIGITAL_RELEASE_FILTER:
         is_released = await release_filter.check_is_released(

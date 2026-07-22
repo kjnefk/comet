@@ -1,10 +1,14 @@
 from functools import lru_cache
+import re
 
 import orjson
 from RTN import ParsedData
 
 SCRAPE_URL_MODE_BOTH = "both"
 SCRAPE_URL_MODES = frozenset((SCRAPE_URL_MODE_BOTH, "live", "background"))
+_CANONICAL_NONNEGATIVE_INTEGER = re.compile(r"0|[1-9][0-9]*")
+_IMDB_ID = re.compile(r"tt[0-9]{7,10}")
+_KITSU_ID = re.compile(r"[1-9][0-9]*")
 
 
 def load_cached_parsed(value) -> ParsedData | None:
@@ -99,29 +103,48 @@ def default_dump(obj):
 def parse_optional_int(value: str | None):
     if value == "n" or value is None or value == "":
         return None
-    try:
-        return int(value)
-    except ValueError:
+    if (
+        type(value) is not str
+        or _CANONICAL_NONNEGATIVE_INTEGER.fullmatch(value) is None
+    ):
         return None
+    return int(value)
 
 
 def parse_media_id(media_type: str, media_id: str):
-    if media_id.startswith("kitsu:"):
-        _, _, rest = media_id.partition(":")
-        kitsu_id, _, episode_str = rest.partition(":")
-        return kitsu_id, 1, parse_optional_int(episode_str) if episode_str else None
-    if media_type == "series":
-        series_id, sep1, rest1 = media_id.partition(":")
-        if not sep1:
-            return series_id, None, None
-        season_str, sep2, episode_str = rest1.partition(":")
-        return (
-            series_id,
-            parse_optional_int(season_str),
-            parse_optional_int(episode_str) if sep2 else None,
-        )
+    if media_type not in {"movie", "series"}:
+        raise ValueError("media type must be movie or series")
+    if type(media_id) is not str or not media_id:
+        raise ValueError("media ID must be a non-empty string")
 
-    return media_id, None, None
+    if media_id.startswith("kitsu:"):
+        parts = media_id.split(":")
+        if (
+            len(parts) not in {2, 3}
+            or _KITSU_ID.fullmatch(parts[1]) is None
+            or (len(parts) == 3 and parse_optional_int(parts[2]) is None)
+        ):
+            raise ValueError("Kitsu media ID has an invalid current shape")
+        if media_type == "movie" and len(parts) != 2:
+            raise ValueError("movie Kitsu IDs cannot include an episode")
+        episode = parse_optional_int(parts[2]) if len(parts) == 3 else None
+        return parts[1], 1, episode
+
+    parts = media_id.split(":")
+    if _IMDB_ID.fullmatch(parts[0]) is None:
+        raise ValueError("IMDb media ID has an invalid current shape")
+    if media_type == "series":
+        if (
+            len(parts) != 3
+            or parse_optional_int(parts[1]) is None
+            or parse_optional_int(parts[2]) is None
+        ):
+            raise ValueError("series IMDb ID must include season and episode")
+        return parts[0], int(parts[1]), int(parts[2])
+
+    if len(parts) != 1:
+        raise ValueError("movie IMDb IDs cannot include episode segments")
+    return parts[0], None, None
 
 
 def match_parsed_episode_target(
