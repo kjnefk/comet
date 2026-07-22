@@ -2,6 +2,8 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
+
 from comet.cometnet.gossip import GossipEngine
 from comet.cometnet.protocol import TorrentAnnounce, TorrentMetadata
 from comet.cometnet.reputation import ReputationStore
@@ -18,6 +20,30 @@ def _engine_with_queue(*items):
 
 
 class CometNetGossipTests(unittest.IsolatedAsyncioTestCase):
+    def test_signed_protocol_rejects_coerced_and_non_finite_numbers(self):
+        base = {
+            "info_hash": "a" * 40,
+            "title": "Title",
+            "size": 1,
+            "tracker": "peer",
+            "imdb_id": "tt123",
+        }
+
+        for override in (
+            {"size": True},
+            {"size": 0},
+            {"seeders": False},
+            {"file_index": -1},
+            {"updated_at": float("nan")},
+            {"updated_at": float("inf")},
+        ):
+            with self.subTest(override=override):
+                with self.assertRaises(ValidationError):
+                    TorrentMetadata(**(base | override))
+
+        with self.assertRaisesRegex(ValidationError, "finite number"):
+            TorrentAnnounce(timestamp=float("nan"))
+
     async def test_existing_hash_is_not_repropagated_without_verification(self):
         info_hash = "a" * 40
         engine = GossipEngine(object(), ReputationStore())

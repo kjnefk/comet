@@ -5,6 +5,7 @@ Defines all message types and serialization logic for CometNet P2P communication
 Uses MsgPack for efficient binary serialization.
 """
 
+import math
 import time
 from enum import Enum
 from typing import List, Optional, Union
@@ -49,6 +50,20 @@ class BaseMessage(BaseModel):
     timestamp: float = Field(default_factory=time.time)
     sender_id: str = ""  # Node ID of the sender
     signature: str = ""  # Hex-encoded signature
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def reject_boolean_timestamp(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("timestamp must be a finite number")
+        return value
+
+    @field_validator("timestamp")
+    @classmethod
+    def validate_timestamp(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("timestamp must be a finite number")
+        return value
 
     def to_signable_bytes(self) -> bytes:
         """
@@ -169,11 +184,43 @@ class TorrentMetadata(BaseModel):
     @classmethod
     def validate_size(cls, v: int) -> int:
         """Validate that size is a reasonable value."""
-        if v < 0:
-            raise ValueError("size must be non-negative")
+        if v <= 0:
+            raise ValueError("size must be positive")
         if v > 1024 * 1024 * 1024 * 1024 * 10:  # 10 TB max
             raise ValueError("size exceeds maximum allowed value")
         return v
+
+    @field_validator(
+        "size", "seeders", "file_index", "season", "episode", mode="before"
+    )
+    @classmethod
+    def reject_boolean_integer_fields(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("torrent integer fields cannot be booleans")
+        return value
+
+    @field_validator("seeders", "file_index", "season", "episode")
+    @classmethod
+    def validate_optional_non_negative_integer(
+        cls, value: Optional[int]
+    ) -> Optional[int]:
+        if value is not None and value < 0:
+            raise ValueError("torrent integer fields must be non-negative")
+        return value
+
+    @field_validator("updated_at", mode="before")
+    @classmethod
+    def reject_boolean_updated_at(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("updated_at must be a finite number")
+        return value
+
+    @field_validator("updated_at")
+    @classmethod
+    def validate_updated_at(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("updated_at must be a finite number")
+        return value
 
     @field_validator("imdb_id")
     @classmethod
