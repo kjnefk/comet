@@ -36,6 +36,7 @@ from comet.core.logger import logger
 from comet.core.models import STREMIO_API_PREFIX, settings
 from comet.services.anime import anime_mapper
 from comet.services.bandwidth import bandwidth_monitor
+from comet.services.debrid_account_scraper import shutdown_account_sync_tasks
 from comet.services.debrid_cache import shutdown_cache_writes
 from comet.services.dmm_ingester import dmm_ingester
 from comet.services.indexer_manager import indexer_manager
@@ -92,6 +93,7 @@ async def lifespan(app: FastAPI):
 
         cleanup.push_async_callback(http_client_manager.close)
         await http_client_manager.init()
+        cleanup.push_async_callback(shutdown_account_sync_tasks)
         cleanup.push_async_callback(network_manager.close_all)
         cleanup.push_async_callback(torrent_update_queue.stop)
         cleanup.push_async_callback(add_torrent_queue.stop)

@@ -20,7 +20,7 @@ from comet.utils.parsing import parsed_matches_target
 
 _SYNC_LOCK_PREFIX = "debrid-account-sync"
 _CACHED_STATUSES = frozenset({"cached", "downloaded"})
-_background_tasks: set[asyncio.Task] = set()
+_background_tasks: dict[asyncio.Task, DistributedLock] = {}
 TORRENT_INFO_HASH_MEMBERSHIP_SQL = build_json_list_membership_predicate(
     "info_hash", "info_hashes"
 )
@@ -260,7 +260,7 @@ async def _sync_task(
 
 
 def _handle_sync_task_done(task: asyncio.Task):
-    _background_tasks.discard(task)
+    _background_tasks.pop(task, None)
     if task.cancelled():
         return
 
@@ -274,6 +274,37 @@ def _handle_sync_task_done(task: asyncio.Task):
 
     if error:
         logger.error(f"Debrid account sync task failed: {error}")
+
+
+def _schedule_sync_task(
+    lock: DistributedLock,
+    session,
+    service: str,
+    api_key: str,
+    ip: str,
+    account_key_hash: str,
+) -> asyncio.Task:
+    task = asyncio.create_task(
+        _sync_task(lock, session, service, api_key, ip, account_key_hash),
+        name=f"debrid-account-sync:{service}",
+    )
+    _background_tasks[task] = lock
+    task.add_done_callback(_handle_sync_task_done)
+    return task
+
+
+async def shutdown_account_sync_tasks() -> None:
+    pending = tuple(_background_tasks.items())
+    if not pending:
+        return
+
+    for task, _ in pending:
+        task.cancel()
+    await asyncio.gather(*(task for task, _ in pending), return_exceptions=True)
+    await asyncio.gather(
+        *(lock.release() for _, lock in pending),
+        return_exceptions=True,
+    )
 
 
 async def _has_fresh_snapshot(
@@ -355,7 +386,14 @@ async def ensure_account_snapshot_ready(session, debrid_entries: list[dict], ip:
         lock = DistributedLock(_sync_lock_key(service, account_key_hash), timeout=300)
         if await lock.acquire():
             sync_tasks.append(
-                _sync_task(lock, session, service, api_key, ip, account_key_hash)
+                _schedule_sync_task(
+                    lock,
+                    session,
+                    service,
+                    api_key,
+                    ip,
+                    account_key_hash,
+                )
             )
         else:
             waiting_targets.append((service, account_key_hash))
@@ -373,12 +411,6 @@ async def ensure_account_snapshot_ready(session, debrid_entries: list[dict], ip:
                     "SCRAPER",
                     "Debrid account warm sync timed out, continuing with partial data",
                 )
-        else:
-            for sync_task in sync_tasks:
-                task = asyncio.create_task(sync_task)
-                _background_tasks.add(task)
-                task.add_done_callback(_handle_sync_task_done)
-
     if waiting_targets:
         await _wait_for_snapshot_targets(waiting_targets, min_timestamp, deadline)
 
@@ -392,11 +424,14 @@ async def trigger_account_snapshot_sync(session, service: str, api_key: str, ip:
     if not await lock.acquire():
         return False
 
-    task = asyncio.create_task(
-        _sync_task(lock, session, service, api_key, ip, account_key_hash)
+    _schedule_sync_task(
+        lock,
+        session,
+        service,
+        api_key,
+        ip,
+        account_key_hash,
     )
-    _background_tasks.add(task)
-    task.add_done_callback(_handle_sync_task_done)
     return True
 
 

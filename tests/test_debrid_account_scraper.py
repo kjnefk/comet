@@ -1,7 +1,8 @@
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from databases import Database
 
@@ -86,3 +87,42 @@ class DebridAccountSnapshotTests(unittest.IsolatedAsyncioTestCase):
                 )
             finally:
                 await database.disconnect()
+
+
+class DebridAccountTaskTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncTearDown(self):
+        await account_scraper.shutdown_account_sync_tasks()
+
+    async def test_shutdown_releases_lock_when_task_has_not_started(self):
+        lock = AsyncMock()
+        sync = AsyncMock()
+
+        with patch.object(account_scraper, "_sync_single_account", new=sync):
+            task = account_scraper._schedule_sync_task(
+                lock, object(), "realdebrid", "key", "ip", "account"
+            )
+            await account_scraper.shutdown_account_sync_tasks()
+
+        self.assertTrue(task.cancelled())
+        sync.assert_not_awaited()
+        lock.release.assert_awaited_once()
+        self.assertFalse(account_scraper._background_tasks)
+
+    async def test_shutdown_cancels_running_sync_and_releases_lock(self):
+        started = asyncio.Event()
+
+        async def sync_account(*args):
+            started.set()
+            await asyncio.Event().wait()
+
+        lock = AsyncMock()
+        with patch.object(account_scraper, "_sync_single_account", new=sync_account):
+            task = account_scraper._schedule_sync_task(
+                lock, object(), "alldebrid", "key", "ip", "account"
+            )
+            await started.wait()
+            await account_scraper.shutdown_account_sync_tasks()
+
+        self.assertTrue(task.cancelled())
+        lock.release.assert_awaited()
+        self.assertFalse(account_scraper._background_tasks)
