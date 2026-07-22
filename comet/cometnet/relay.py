@@ -83,22 +83,19 @@ class CometNetRelay(CometNetBackend):
         """Stop the relay client and flush remaining batch."""
         self._running = False
 
-        await self._flush_batch()
-
         if self._batch_task:
             self._batch_task.cancel()
             try:
                 await self._batch_task
             except asyncio.CancelledError:
                 pass
+            self._batch_task = None
 
         if self._flush_tasks:
-            for task in list(self._flush_tasks):
-                task.cancel()
-
-            if self._flush_tasks:
-                await asyncio.gather(*self._flush_tasks, return_exceptions=True)
+            await asyncio.gather(*tuple(self._flush_tasks), return_exceptions=True)
             self._flush_tasks.clear()
+
+        await self._flush_batch()
 
         if self._session:
             await self._session.close()
@@ -146,6 +143,8 @@ class CometNetRelay(CometNetBackend):
         }
 
         async with self._batch_lock:
+            if not self._running:
+                return False
             self._batch.append(torrent_data)
 
             if len(self._batch) >= self.batch_size:
@@ -176,6 +175,8 @@ class CometNetRelay(CometNetBackend):
             self._batch = []
 
         if not self._session:
+            async with self._batch_lock:
+                self._batch = batch_to_send + self._batch
             return
 
         try:
@@ -183,6 +184,10 @@ class CometNetRelay(CometNetBackend):
                 await self._send_single(batch_to_send[0])
             else:
                 await self._send_batch(batch_to_send)
+        except asyncio.CancelledError:
+            async with self._batch_lock:
+                self._batch = batch_to_send + self._batch
+            raise
         except asyncio.TimeoutError:
             self._total_errors += len(batch_to_send)
             logger.warning(
@@ -562,6 +567,8 @@ class CometNetRelay(CometNetBackend):
             return
 
         async with self._batch_lock:
+            if not self._running:
+                return
             self._batch.extend(batch_data)
 
             if len(self._batch) >= self.batch_size:
