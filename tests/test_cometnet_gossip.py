@@ -66,9 +66,15 @@ class CometNetGossipTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-        with patch.object(
-            engine, "_repropagate", new=AsyncMock(return_value=1)
-        ) as repropagate:
+        with (
+            patch(
+                "comet.cometnet.gossip.validate_message_security",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                engine, "_repropagate", new=AsyncMock(return_value=1)
+            ) as repropagate,
+        ):
             await engine.handle_announce("sender", announce)
 
         repropagate.assert_not_awaited()
