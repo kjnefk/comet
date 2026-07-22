@@ -1,9 +1,60 @@
+from datetime import date
+
 import aiohttp
 
 from comet.core.logger import logger
 from comet.core.models import settings
 
 DEFAULT_TMDB_READ_ACCESS_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJlNTkxMmVmOWFhM2IxNzg2Zjk3ZTE1NWY1YmQ3ZjY1MSIsInN1YiI6IjY1M2NjNWUyZTg5NGE2MDBmZjE2N2FmYyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.xrIXsMFJpI1o1j5g2QpQcFP1X3AfRjFA5FlBFO5Naw8"
+
+
+def _extract_upcoming_release_date(payload) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+
+    release_dates = []
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return None
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        releases = result.get("release_dates")
+        if not isinstance(releases, list):
+            continue
+        for release in releases:
+            if not isinstance(release, dict) or release.get("type") not in (4, 5):
+                continue
+            raw_date = release.get("release_date")
+            if not isinstance(raw_date, str):
+                continue
+            date_text = raw_date.split("T", 1)[0]
+            try:
+                date.fromisoformat(date_text)
+            except ValueError:
+                continue
+            release_dates.append(date_text)
+
+    return min(release_dates) if release_dates else None
+
+
+def _extract_tmdb_id(payload) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+
+    for result_key in ("movie_results", "tv_results"):
+        results = payload.get(result_key)
+        if not isinstance(results, list):
+            continue
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            result_id = result.get("id")
+            if isinstance(result_id, bool) or not isinstance(result_id, int):
+                continue
+            if result_id > 0:
+                return str(result_id)
+    return None
 
 
 class TMDBApi:
@@ -24,16 +75,7 @@ class TMDBApi:
 
                 data = await response.json()
 
-            release_dates = []
-            for result in data.get("results", []):
-                for release in result.get("release_dates", []):
-                    # Type 4 = Digital, Type 5 = Physical
-                    if release.get("type") in (4, 5):
-                        date_str = release.get("release_date", "").split("T")[0]
-                        if date_str:
-                            release_dates.append(date_str)
-
-            return min(release_dates) if release_dates else None
+            return _extract_upcoming_release_date(data)
         except Exception as e:
             logger.error(f"TMDB: Error getting movie release date for {tmdb_id}: {e}")
             return None
@@ -66,15 +108,7 @@ class TMDBApi:
 
                 data = await response.json()
 
-            movie_results = data.get("movie_results")
-            if movie_results:
-                return str(movie_results[0]["id"])
-
-            tv_results = data.get("tv_results")
-            if tv_results:
-                return str(tv_results[0]["id"])
-
-            return None
+            return _extract_tmdb_id(data)
         except Exception as e:
             logger.error(f"TMDB: Error converting IMDB ID {imdb_id}: {e}")
             return None
