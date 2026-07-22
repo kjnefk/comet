@@ -12,8 +12,12 @@ from comet.metadata.episode_index import EpisodeIndexService
 from comet.services.debrid_cache import schedule_cache_availability
 from comet.services.filtering import quick_alias_match
 from comet.services.torrent_manager import torrent_update_queue
-from comet.utils.parsing import (ensure_multi_language, is_video,
-                                 match_parsed_episode_target, parse_media_id)
+from comet.utils.parsing import (
+    ensure_multi_language,
+    is_video,
+    match_parsed_episode_target,
+    parse_media_id,
+)
 
 
 def batch_parse(filenames):
@@ -21,6 +25,55 @@ def batch_parse(filenames):
     for parsed in parsed_results:
         ensure_multi_language(parsed)
     return parsed_results
+
+
+def _prepare_cached_torrents(responses, *, is_offcloud: bool):
+    prepared = []
+    filenames = []
+
+    for response in responses:
+        if not isinstance(response, dict):
+            continue
+        data = response.get("data")
+        if not isinstance(data, dict):
+            continue
+        items = data.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for torrent in items:
+            if not isinstance(torrent, dict) or torrent.get("status") != "cached":
+                continue
+            info_hash = torrent.get("hash")
+            if not isinstance(info_hash, str) or not info_hash:
+                continue
+
+            prepared_files = []
+            if not is_offcloud:
+                torrent_files = torrent.get("files")
+                if not isinstance(torrent_files, list):
+                    continue
+
+                for file in torrent_files:
+                    if not isinstance(file, dict):
+                        continue
+                    name = file.get("name")
+                    if not isinstance(name, str) or not name:
+                        continue
+                    filename = name.rsplit("/", 1)[-1]
+                    if not is_video(filename) or "sample" in filename.lower():
+                        continue
+                    prepared_files.append((file, filename))
+                    filenames.append(filename)
+
+            prepared.append(
+                {
+                    "info_hash": info_hash,
+                    "files": prepared_files,
+                }
+            )
+
+    return prepared, filenames
 
 
 class StremThru:
@@ -237,13 +290,11 @@ class StremThru:
 
         responses = await asyncio.gather(*tasks)
 
-        availability = [
-            response["data"]["items"]
-            for response in responses
-            if response and "data" in response
-        ]
-
         is_offcloud = self.store_name == "offcloud"
+        cached_torrents, filenames_to_parse = _prepare_cached_torrents(
+            responses,
+            is_offcloud=is_offcloud,
+        )
         requested_series_id, requested_season, requested_episode = (
             self._requested_episode_scope()
         )
@@ -259,18 +310,6 @@ class StremThru:
             target_air_date=target_air_date,
         )
 
-        filenames_to_parse = []
-        if not is_offcloud:
-            for result in availability:
-                for torrent in result:
-                    if torrent["status"] != "cached":
-                        continue
-                    for file in torrent["files"]:
-                        filename = file["name"].split("/")[-1]
-                        if not is_video(filename) or "sample" in filename.lower():
-                            continue
-                        filenames_to_parse.append(filename)
-
         parsed_iter = iter([])
         if filenames_to_parse:
             loop = asyncio.get_running_loop()
@@ -280,25 +319,20 @@ class StremThru:
             parsed_iter = iter(parsed_results)
 
         files = []
-        cached_count = 0
-        for result in availability:
-            for torrent in result:
-                if torrent["status"] != "cached":
+        for torrent in cached_torrents:
+            info_hash = torrent["info_hash"]
+            seeders = seeders_map.get(info_hash, 0)
+            tracker = tracker_map.get(info_hash, "")
+            sources = sources_map.get(info_hash, [])
+
+            if is_offcloud:
+                if is_episode_request:
+                    # Strict matching for episode requests: offcloud does not expose
+                    # per-file metadata here, so we cannot map a specific episode.
                     continue
-
-                cached_count += 1
-                hash = torrent["hash"]
-                seeders = seeders_map.get(hash, 0)
-                tracker = tracker_map.get(hash, "")
-                sources = sources_map.get(hash, [])
-
-                if is_offcloud:
-                    if is_episode_request:
-                        # Strict matching for episode requests: offcloud does not expose
-                        # per-file metadata here, so we cannot map a specific episode.
-                        continue
-                    file_info = {
-                        "info_hash": hash,
+                files.append(
+                    {
+                        "info_hash": info_hash,
                         "index": None,
                         "title": None,
                         "size": None,
@@ -306,66 +340,61 @@ class StremThru:
                         "episode": None,
                         "parsed": None,
                     }
+                )
+                continue
 
-                    files.append(file_info)
+            for file, filename in torrent["files"]:
+                filename_parsed = next(parsed_iter)
+
+                parsed_season = (
+                    filename_parsed.seasons[0] if filename_parsed.seasons else None
+                )
+                parsed_episode = (
+                    filename_parsed.episodes[0] if filename_parsed.episodes else None
+                )
+
+                if is_episode_request:
+                    if not self._strict_episode_match(
+                        filename_parsed,
+                        requested_season,
+                        requested_episode,
+                        target_air_date,
+                    ):
+                        continue
+                    season = requested_season
+                    episode = requested_episode
                 else:
-                    for file in torrent["files"]:
-                        filename = file["name"].split("/")[-1]
+                    season = parsed_season
+                    episode = parsed_episode
 
-                        if not is_video(filename) or "sample" in filename.lower():
-                            continue
+                index = file.get("index")
+                if not isinstance(index, int) or index < 0:
+                    index = None
+                size = file.get("size")
+                if not isinstance(size, int) or size < 0:
+                    size = None
 
-                        filename_parsed = next(parsed_iter)
+                file_info = {
+                    "info_hash": info_hash,
+                    "index": index,
+                    "title": filename,
+                    "size": size,
+                    "season": season,
+                    "episode": episode,
+                    "parsed": filename_parsed,
+                    "seeders": seeders,
+                    "tracker": tracker,
+                    "sources": sources,
+                }
 
-                        parsed_season = (
-                            filename_parsed.seasons[0]
-                            if filename_parsed.seasons
-                            else None
-                        )
-                        parsed_episode = (
-                            filename_parsed.episodes[0]
-                            if filename_parsed.episodes
-                            else None
-                        )
-
-                        if is_episode_request:
-                            if not self._strict_episode_match(
-                                filename_parsed,
-                                requested_season,
-                                requested_episode,
-                                target_air_date,
-                            ):
-                                continue
-                            season = requested_season
-                            episode = requested_episode
-                        else:
-                            season = parsed_season
-                            episode = parsed_episode
-
-                        index = file["index"] if file["index"] != -1 else None
-                        size = file["size"] if file["size"] != -1 else None
-
-                        file_info = {
-                            "info_hash": hash,
-                            "index": index,
-                            "title": filename,
-                            "size": size,
-                            "season": season,
-                            "episode": episode,
-                            "parsed": filename_parsed,
-                            "seeders": seeders,
-                            "tracker": tracker,
-                            "sources": sources,
-                        }
-
-                        files.append(file_info)
-                        await torrent_update_queue.add_torrent_info(
-                            file_info, self.media_only_id
-                        )
+                files.append(file_info)
+                await torrent_update_queue.add_torrent_info(
+                    file_info, self.media_only_id
+                )
 
         logger.log(
             "SCRAPER",
-            f"{self.store_name}: Found {cached_count} cached torrents with {len(files)} valid files",
+            f"{self.store_name}: Found {len(cached_torrents)} cached torrents with {len(files)} valid files",
         )
         return files
 
