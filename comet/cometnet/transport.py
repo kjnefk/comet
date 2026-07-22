@@ -957,6 +957,7 @@ class ConnectionManager:
                         return_exceptions=True,
                     )
 
+                    signed_pings = []
                     for i, (conn, nonce, ping) in enumerate(ping_data):
                         if not self._running:
                             break
@@ -968,8 +969,15 @@ class ConnectionManager:
                         ping.signature = sig
                         send_time = time.time()
                         conn.pending_pings[nonce] = send_time
+                        signed_pings.append((conn, nonce, ping))
 
-                        asyncio.create_task(conn.send(ping))
+                    send_results = await asyncio.gather(
+                        *(conn.send(ping) for conn, _, ping in signed_pings),
+                        return_exceptions=True,
+                    )
+                    for (conn, nonce, _), result in zip(signed_pings, send_results):
+                        if result is not True:
+                            conn.pending_pings.pop(nonce, None)
 
                 # Disconnect stale connections
                 if stale_nodes:
