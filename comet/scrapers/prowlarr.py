@@ -7,10 +7,12 @@ from comet.core.models import settings
 from comet.scrapers.base import BaseScraper
 from comet.scrapers.models import ScrapeRequest, ScrapeResult
 from comet.services.indexer_manager import indexer_manager
-from comet.services.torrent_manager import (add_torrent_queue,
-                                            download_torrent,
-                                            extract_torrent_metadata,
-                                            extract_trackers_from_magnet)
+from comet.services.torrent_manager import (
+    add_torrent_queue,
+    download_torrent,
+    extract_torrent_metadata,
+    extract_trackers_from_magnet,
+)
 
 
 class ProwlarrScraper(BaseScraper):
@@ -154,10 +156,13 @@ class ProwlarrScraper(BaseScraper):
 
             torrent_tasks = []
             for result in all_results:
-                if result["infoUrl"] in seen:
+                if not isinstance(result, dict):
+                    continue
+                info_url = result.get("infoUrl")
+                if not isinstance(info_url, str) or not info_url or info_url in seen:
                     continue
 
-                seen.add(result["infoUrl"])
+                seen.add(info_url)
                 torrent_tasks.append(
                     self.process_torrent(result, request.media_only_id, request.season)
                 )
@@ -170,7 +175,7 @@ class ProwlarrScraper(BaseScraper):
                     logger.warning(f"Error processing torrent with Prowlarr: {sublist}")
                     continue
                 for t in sublist:
-                    if t["infoHash"]:
+                    if isinstance(t, dict) and t.get("infoHash"):
                         torrents.append(t)
 
         except Exception as e:
