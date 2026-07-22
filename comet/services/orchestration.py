@@ -1,6 +1,5 @@
 import asyncio
 
-import orjson
 from RTN import DefaultRanking, ParsedData
 
 from comet.core.execution import get_executor
@@ -12,9 +11,13 @@ from comet.services.filtering import filter_worker
 from comet.services.ranking import rank_worker
 from comet.services.torrent_manager import torrent_update_queue
 from comet.utils.media_ids import normalize_cache_media_ids
-from comet.utils.parsing import ensure_multi_language, parsed_matches_target
-from comet.utils.torrent_cache import (build_torrent_cache_where,
-                                       normalize_search_params)
+from comet.utils.parsing import (
+    ensure_multi_language,
+    load_cached_parsed,
+    load_cached_string_list,
+    parsed_matches_target,
+)
+from comet.utils.torrent_cache import build_torrent_cache_where, normalize_search_params
 
 
 class TorrentManager:
@@ -133,7 +136,10 @@ class TorrentManager:
     async def get_cached_torrents(self):
         rows = []
         cache_row_groups = await asyncio.gather(
-            *(self._fetch_cached_rows(cache_media_id) for cache_media_id in self.cache_media_ids)
+            *(
+                self._fetch_cached_rows(cache_media_id)
+                for cache_media_id in self.cache_media_ids
+            )
         )
         for cache_media_id, cache_rows in zip(self.cache_media_ids, cache_row_groups):
             if cache_rows and cache_media_id == self.media_only_id:
@@ -169,7 +175,12 @@ class TorrentManager:
             rows = list(best_rows.values())
 
         for row in rows:
-            parsed_data = ParsedData(**orjson.loads(row["parsed_json"]))
+            parsed_data = load_cached_parsed(row["parsed_json"])
+            if parsed_data is None:
+                logger.warning(
+                    f"Skipping torrent cache row with invalid parsed data: {row['info_hash']}"
+                )
+                continue
             ensure_multi_language(parsed_data)
 
             target_season = self.search_season
@@ -197,7 +208,7 @@ class TorrentManager:
                 "seeders": row["seeders"],
                 "size": row["size"],
                 "tracker": row["tracker"],
-                "sources": orjson.loads(row["sources_json"]),
+                "sources": load_cached_string_list(row["sources_json"]),
                 "parsed": parsed_data,
             }
 

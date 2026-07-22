@@ -1,9 +1,33 @@
 from functools import lru_cache
 
+import orjson
 from RTN import ParsedData
 
 SCRAPE_URL_MODE_BOTH = "both"
 SCRAPE_URL_MODES = frozenset((SCRAPE_URL_MODE_BOTH, "live", "background"))
+
+
+def load_cached_parsed(value) -> ParsedData | None:
+    try:
+        payload = orjson.loads(value)
+    except (TypeError, orjson.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return ParsedData(**payload)
+    except ValueError:
+        return None
+
+
+def load_cached_string_list(value) -> list[str]:
+    try:
+        payload = orjson.loads(value)
+    except (TypeError, orjson.JSONDecodeError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, str) and item]
 
 
 def ensure_multi_language(parsed: ParsedData):

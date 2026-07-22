@@ -1,11 +1,12 @@
-import orjson
 from RTN import ParsedData
 
 from comet.debrid.manager import retrieve_debrid_availability
-from comet.services.debrid_cache import (get_cached_availability,
-                                         get_cached_availability_any_service,
-                                         schedule_cache_availability)
-from comet.utils.parsing import ensure_multi_language
+from comet.services.debrid_cache import (
+    get_cached_availability,
+    get_cached_availability_any_service,
+    schedule_cache_availability,
+)
+from comet.utils.parsing import ensure_multi_language, load_cached_parsed
 
 
 class DebridService:
@@ -164,12 +165,13 @@ class DebridService:
                     torrent["size"] = row["size"]
 
                 if row["parsed"] is not None:
-                    cached_parsed = ParsedData(**orjson.loads(row["parsed"]))
-                    merged_parsed = self._merge_parsed(
-                        torrent.get("parsed"), cached_parsed
-                    )
-                    if merged_parsed is not None:
-                        torrent["parsed"] = merged_parsed
+                    cached_parsed = load_cached_parsed(row["parsed"])
+                    if cached_parsed is not None:
+                        merged_parsed = self._merge_parsed(
+                            torrent.get("parsed"), cached_parsed
+                        )
+                        if merged_parsed is not None:
+                            torrent["parsed"] = merged_parsed
 
                 if row["title"] is not None:
                     torrent["title"] = row["title"]
@@ -199,10 +201,13 @@ class DebridService:
                 torrent["size"] = row["size"]
 
             if row["parsed"] is not None:
-                cached_parsed = ParsedData(**orjson.loads(row["parsed"]))
-                merged_parsed = cls._merge_parsed(torrent.get("parsed"), cached_parsed)
-                if merged_parsed is not None:
-                    torrent["parsed"] = merged_parsed
+                cached_parsed = load_cached_parsed(row["parsed"])
+                if cached_parsed is not None:
+                    merged_parsed = cls._merge_parsed(
+                        torrent.get("parsed"), cached_parsed
+                    )
+                    if merged_parsed is not None:
+                        torrent["parsed"] = merged_parsed
 
             if row["title"] is not None:
                 torrent["title"] = row["title"]

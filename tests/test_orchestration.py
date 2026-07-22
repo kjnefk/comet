@@ -73,3 +73,46 @@ class TorrentOrchestrationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(primary_started.is_set())
         self.assertTrue(alternate_started.is_set())
+
+    async def test_corrupt_cached_parse_does_not_discard_valid_peer(self):
+        manager = TorrentManager(
+            media_type="movie",
+            media_full_id="tt123",
+            media_only_id="tt123",
+            title="Title",
+            year=2024,
+            year_end=None,
+            season=None,
+            episode=None,
+            aliases={},
+            remove_adult_content=False,
+        )
+        base_row = {
+            "file_index": 0,
+            "seeders": 1,
+            "size": 100,
+            "tracker": "cache",
+            "sources_json": '["tracker:first", null]',
+            "episode": None,
+            "updated_at": 1,
+        }
+        rows = [
+            {
+                **base_row,
+                "info_hash": "a" * 40,
+                "title": "Corrupt.mkv",
+                "parsed_json": "not-json",
+            },
+            {
+                **base_row,
+                "info_hash": "b" * 40,
+                "title": "Valid.mkv",
+                "parsed_json": '{"raw_title":"Valid.mkv"}',
+            },
+        ]
+
+        with patch.object(manager, "_fetch_cached_rows", return_value=rows):
+            await manager.get_cached_torrents()
+
+        self.assertNotIn("a" * 40, manager.torrents)
+        self.assertEqual(manager.torrents["b" * 40]["sources"], ["tracker:first"])
