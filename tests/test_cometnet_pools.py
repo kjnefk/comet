@@ -323,6 +323,37 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
                 {"wss://one", "wss://two"},
             )
 
+    async def test_save_serializes_auxiliary_snapshots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.add_membership("pool-a")
+            save_started = asyncio.Event()
+            release_save = asyncio.Event()
+            first_membership_write = True
+
+            async def yielding_write(path, content):
+                nonlocal first_membership_write
+                if path.name == "memberships.json" and first_membership_write:
+                    first_membership_write = False
+                    save_started.set()
+                    await release_save.wait()
+                await write_text_atomic(path, content)
+
+            with patch("comet.cometnet.pools.write_text_atomic", new=yielding_write):
+                save_task = asyncio.create_task(store.save())
+                await save_started.wait()
+                addition_task = asyncio.create_task(store.add_membership("pool-b"))
+                await asyncio.sleep(0)
+
+                self.assertFalse(addition_task.done())
+                release_save.set()
+                await asyncio.gather(save_task, addition_task)
+
+            persisted = json.loads(
+                Path(directory, "memberships.json").read_text()
+            )
+            self.assertEqual(persisted, ["pool-a", "pool-b"])
+
     async def test_delete_pool_cleans_persisted_and_published_state(self):
         class Identity:
             public_key_hex = "creator-key"
@@ -465,6 +496,100 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(sum(isinstance(result, ValueError) for result in results), 1)
             self.assertEqual(set(store.get_all_manifests()), {"pool-a"})
             self.assertEqual(store.get_memberships(), {"pool-a"})
+
+    async def test_contribution_waits_for_authoritative_manifest_mutation(self):
+        class Identity:
+            public_key_hex = "creator-key"
+
+            async def sign_hex_async(self, payload):
+                del payload
+                return "signature"
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._manifest())
+            write_started = asyncio.Event()
+            release_write = asyncio.Event()
+
+            async def yielding_write(path, content):
+                write_started.set()
+                await release_write.wait()
+                await write_text_atomic(path, content)
+
+            with patch("comet.cometnet.pools.write_text_atomic", new=yielding_write):
+                member_task = asyncio.create_task(
+                    store.add_member("pool-a", "member-key", Identity())
+                )
+                await write_started.wait()
+                contribution_task = asyncio.create_task(
+                    store.record_contribution("creator-key", "pool-a")
+                )
+                await asyncio.sleep(0)
+
+                self.assertFalse(contribution_task.done())
+                release_write.set()
+                self.assertEqual(
+                    await asyncio.gather(member_task, contribution_task),
+                    [True, True],
+                )
+
+            await store.flush_dirty_manifests()
+            reloaded = PoolStore(directory)
+            await reloaded.load()
+            manifest = reloaded.get_manifest("pool-a")
+            self.assertEqual(
+                {member.public_key for member in manifest.members},
+                {"creator-key", "member-key"},
+            )
+            self.assertEqual(
+                manifest.get_member("creator-key").contribution_count,
+                1,
+            )
+
+    async def test_failed_dirty_flush_is_visible_and_remains_retryable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            await store.store_manifest(self._manifest())
+            await store.record_contribution("creator-key", "pool-a", count=2)
+
+            with patch(
+                "comet.cometnet.pools.write_text_atomic",
+                side_effect=OSError("disk unavailable"),
+            ):
+                with self.assertRaisesRegex(OSError, "disk unavailable"):
+                    await store.flush_dirty_manifests()
+
+            self.assertEqual(store._dirty_manifests, {"pool-a"})
+            self.assertEqual(
+                store.get_manifest("pool-a")
+                .get_member("creator-key")
+                .contribution_count,
+                2,
+            )
+
+            await store.flush_dirty_manifests()
+            self.assertEqual(store._dirty_manifests, set())
+            reloaded = PoolStore(directory)
+            await reloaded.load()
+            self.assertEqual(
+                reloaded.get_manifest("pool-a")
+                .get_member("creator-key")
+                .contribution_count,
+                2,
+            )
+
+    async def test_contribution_arguments_require_current_exact_types(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = PoolStore(directory)
+            for arguments in (
+                ("", None, 1),
+                ("creator-key", "", 1),
+                ("creator-key", None, True),
+                ("creator-key", None, 0),
+            ):
+                with self.subTest(arguments=arguments):
+                    with self.assertRaises(ValueError):
+                        await store.record_contribution(*arguments)
 
     async def test_invite_limits_reject_boolean_zero_and_non_finite_values(self):
         class Identity:

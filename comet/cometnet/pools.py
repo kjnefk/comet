@@ -484,9 +484,10 @@ class PoolStore:
 
     async def save(self) -> None:
         """Save all data to disk."""
-        await self._save_memberships()
-        await self._save_subscriptions()
-        await self._save_pool_peers()
+        async with self._auxiliary_lock:
+            await self._save_memberships()
+            await self._save_subscriptions()
+            await self._save_pool_peers()
         await self.flush_dirty_manifests()
 
     # ==================== Manifest Operations ====================
@@ -1293,67 +1294,58 @@ class PoolStore:
         Returns:
             True if contribution was recorded in at least one pool, False if member not found
         """
-        contribution_time = time.time()
+        if type(contributor_public_key) is not str or not contributor_public_key:
+            raise ValueError("contributor_public_key must be a non-empty string")
+        if pool_id is not None and (type(pool_id) is not str or not pool_id):
+            raise ValueError("pool_id must be a non-empty string or None")
+        if type(count) is not int or count <= 0:
+            raise ValueError("count must be a positive integer")
 
-        # If pool_id is specified, only update that specific pool
-        if pool_id:
-            manifest = self._manifests.get(pool_id)
-            if manifest:
+        async with self._mutation_lock:
+            contribution_time = time.time()
+
+            # If pool_id is specified, only update that specific pool
+            if pool_id:
+                manifest = self._manifests.get(pool_id)
+                if manifest:
+                    member = manifest.get_member(contributor_public_key)
+                    if member:
+                        member.contribution_count += count
+                        member.last_seen = contribution_time
+                        self._dirty_manifests.add(manifest.pool_id)
+                        return True
+                return False
+
+            # No pool_id specified: update all pools containing this member.
+            recorded = False
+            for manifest in self._manifests.values():
                 member = manifest.get_member(contributor_public_key)
                 if member:
                     member.contribution_count += count
                     member.last_seen = contribution_time
                     self._dirty_manifests.add(manifest.pool_id)
-                    return True
-            return False
+                    recorded = True
 
-        # No pool_id specified: record contribution in all pools the member belongs to
-        recorded = False
-        for manifest in self._manifests.values():
-            member = manifest.get_member(contributor_public_key)
-            if member:
-                member.contribution_count += count
-                member.last_seen = contribution_time
-                self._dirty_manifests.add(manifest.pool_id)
-                recorded = True
-
-        return recorded
-
-    async def _save_manifest_async(self, manifest: PoolManifest) -> bool:
-        """Save a manifest to disk (without re-signing)."""
-        manifest_path = self.manifests_dir / f"{manifest.pool_id}.json"
-        try:
-            await write_text_atomic(
-                manifest_path, json.dumps(manifest.to_persisted_dict(), indent=2)
-            )
-            return True
-        except Exception as e:
-            logger.warning(f"Failed to save pool manifest {manifest.pool_id}: {e}")
-            return False
+            return recorded
 
     async def flush_dirty_manifests(self) -> None:
         """Save all modified manifests to disk."""
-        if not self._dirty_manifests:
-            return
+        async with self._mutation_lock:
+            count = 0
+            for pool_id in sorted(tuple(self._dirty_manifests)):
+                manifest = self._manifests.get(pool_id)
+                if manifest is None:
+                    self._dirty_manifests.discard(pool_id)
+                    continue
 
-        to_save = list(self._dirty_manifests)
-        self._dirty_manifests.clear()
+                # Keep the ID dirty until persistence succeeds. Any write error
+                # remains visible to periodic/shutdown callers and can be retried.
+                await self.store_manifest(manifest)
+                self._dirty_manifests.discard(pool_id)
+                count += 1
 
-        count = 0
-        failed: Set[str] = set()
-        for pool_id in to_save:
-            manifest = self._manifests.get(pool_id)
-            if manifest:
-                if await self._save_manifest_async(manifest):
-                    count += 1
-                else:
-                    failed.add(pool_id)
-
-        if failed:
-            self._dirty_manifests.update(failed)
-
-        if count > 0:
-            logger.debug(f"Flushed {count} dirty pool manifests")
+            if count > 0:
+                logger.debug(f"Flushed {count} dirty pool manifests")
 
     # ==================== Validation ====================
 
