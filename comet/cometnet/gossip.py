@@ -14,8 +14,10 @@ from comet.cometnet.crypto import NodeIdentity
 from comet.cometnet.protocol import TorrentAnnounce, TorrentMetadata
 from comet.cometnet.reputation import ReputationStore
 from comet.cometnet.utils import run_in_executor
-from comet.cometnet.validation import (validate_message_security,
-                                       verify_torrent_signature_sync)
+from comet.cometnet.validation import (
+    validate_message_security,
+    verify_torrent_signature_sync,
+)
 from comet.core.logger import logger
 from comet.core.models import settings
 
@@ -341,7 +343,6 @@ class GossipEngine:
                     self._keystore.store_key(
                         node_id=torrent.contributor_id,
                         public_key_hex=torrent.contributor_public_key,
-                        verified=True,
                     )
 
                 valid_torrents.append(torrent)

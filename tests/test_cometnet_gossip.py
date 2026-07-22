@@ -1,6 +1,6 @@
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from pydantic import ValidationError
 
@@ -80,6 +80,39 @@ class CometNetGossipTests(unittest.IsolatedAsyncioTestCase):
         repropagate.assert_not_awaited()
         self.assertEqual(engine.stats["validation_skipped_exists"], 1)
         self.assertEqual(engine.stats["duplicates_ignored"], 1)
+
+    async def test_valid_torrent_key_does_not_gain_handshake_authority(self):
+        keystore = Mock()
+        engine = GossipEngine(object(), ReputationStore(), keystore=keystore)
+        torrent = TorrentMetadata(
+            info_hash="a" * 40,
+            title="Title",
+            size=1,
+            tracker="peer",
+            imdb_id="tt123",
+            contributor_id="contributor-id",
+            contributor_public_key="public-key",
+            contributor_signature="signature",
+        )
+        announce = TorrentAnnounce(sender_id="sender", torrents=[torrent])
+
+        with (
+            patch(
+                "comet.cometnet.gossip.validate_message_security",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "comet.cometnet.gossip.verify_torrent_signature_sync",
+                return_value=True,
+            ),
+        ):
+            await engine.handle_announce("sender", announce)
+
+        keystore.store_key.assert_called_once_with(
+            node_id="contributor-id",
+            public_key_hex="public-key",
+        )
+        keystore.store_verified_key.assert_not_called()
 
     async def test_stop_cancels_both_workers_and_clears_references(self):
         engine = GossipEngine(object(), None)

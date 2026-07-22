@@ -19,16 +19,23 @@ from typing import Awaitable, Callable, Dict, List, Optional, Set
 
 import websockets
 from websockets.client import WebSocketClientProtocol
-from websockets.exceptions import (ConnectionClosed, InvalidStatus,
-                                   WebSocketException)
+from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
 from websockets.http11 import Response
 
 from comet.cometnet.crypto import NodeIdentity
-from comet.cometnet.protocol import (AnyMessage, HandshakeMessage, MessageType,
-                                     PingMessage, PongMessage, parse_message)
-from comet.cometnet.utils import (extract_ip_from_address,
-                                  get_websocket_compression,
-                                  is_valid_peer_address)
+from comet.cometnet.protocol import (
+    AnyMessage,
+    HandshakeMessage,
+    MessageType,
+    PingMessage,
+    PongMessage,
+    parse_message,
+)
+from comet.cometnet.utils import (
+    extract_ip_from_address,
+    get_websocket_compression,
+    is_valid_peer_address,
+)
 from comet.cometnet.validation import validate_message_security
 from comet.core.logger import logger
 from comet.core.models import settings
@@ -804,10 +811,9 @@ class ConnectionManager:
 
             # Store verified public key in keystore
             if self._keystore:
-                self._keystore.store_key(
+                self._keystore.store_verified_key(
                     node_id=peer_handshake.sender_id,
                     public_key_hex=peer_handshake.public_key,
-                    verified=True,
                 )
 
             # Start message receiver task
