@@ -1,11 +1,11 @@
 import asyncio
 import time
+from weakref import WeakValueDictionary
 
 import aiohttp
 import orjson
 
-from comet.core.database import (build_upsert_assignments, database,
-                                 encode_json_param)
+from comet.core.database import build_upsert_assignments, database, encode_json_param
 from comet.core.logger import logger
 from comet.core.models import settings
 from comet.services.anime import anime_mapper
@@ -101,6 +101,16 @@ _CACHE_ALIAS_ENRICH_RETURNING_QUERY = _build_cache_upsert_query(
     _CACHE_ALIAS_ENRICH_METADATA_ASSIGNMENTS
 )
 
+_metadata_refresh_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+
+
+def _get_metadata_refresh_lock(cache_id: str) -> asyncio.Lock:
+    lock = _metadata_refresh_locks.get(cache_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _metadata_refresh_locks[cache_id] = lock
+    return lock
+
 
 class MetadataScraper:
     def __init__(self, session: aiohttp.ClientSession):
@@ -125,18 +135,26 @@ class MetadataScraper:
         if get_cached is not None:
             return get_cached[0], get_cached[1]
 
-        is_kitsu = provider == "kitsu"
+        async with _get_metadata_refresh_lock(cache_id):
+            get_cached = await self.get_cached(cache_id, cache_season, episode)
+            if get_cached is not None:
+                return get_cached[0], get_cached[1]
 
-        metadata_task = asyncio.create_task(
-            self.get_metadata(id, season, episode, is_kitsu, media_type)
-        )
-        aliases_task = asyncio.create_task(self.get_aliases(media_type, id, provider))
-        metadata, aliases = await asyncio.gather(metadata_task, aliases_task)
+            metadata, aliases = await asyncio.gather(
+                self.get_metadata(
+                    id,
+                    season,
+                    episode,
+                    provider == "kitsu",
+                    media_type,
+                ),
+                self.get_aliases(media_type, id, provider),
+            )
 
-        if metadata is not None:
-            aliases = await self.cache_metadata(cache_id, metadata, aliases)
+            if metadata is not None:
+                aliases = await self.cache_metadata(cache_id, metadata, aliases)
 
-        return metadata, aliases
+            return metadata, aliases
 
     @staticmethod
     def _extract_provider(media_id: str):
@@ -261,21 +279,26 @@ class MetadataScraper:
         if get_cached is not None:
             return get_cached[0], get_cached[1]
 
-        metadata = {
-            "title": title,
-            "year": year,
-            "year_end": year_end,
-        }
+        async with _get_metadata_refresh_lock(cache_id):
+            get_cached = await self.get_cached(cache_id, 1, 1)
+            if get_cached is not None:
+                return get_cached[0], get_cached[1]
 
-        aliases = await self.get_aliases(media_type, id, provider)
-        aliases = await self.cache_metadata(
-            cache_id,
-            metadata,
-            aliases,
-            preserve_existing_metadata=True,
-        )
+            metadata = {
+                "title": title,
+                "year": year,
+                "year_end": year_end,
+            }
 
-        return metadata, aliases
+            aliases = await self.get_aliases(media_type, id, provider)
+            aliases = await self.cache_metadata(
+                cache_id,
+                metadata,
+                aliases,
+                preserve_existing_metadata=True,
+            )
+
+            return metadata, aliases
 
     async def get_aliases(
         self,
