@@ -132,8 +132,10 @@ class TorrentManager:
 
     async def get_cached_torrents(self):
         rows = []
-        for cache_media_id in self.cache_media_ids:
-            cache_rows = await self._fetch_cached_rows(cache_media_id)
+        cache_row_groups = await asyncio.gather(
+            *(self._fetch_cached_rows(cache_media_id) for cache_media_id in self.cache_media_ids)
+        )
+        for cache_media_id, cache_rows in zip(self.cache_media_ids, cache_row_groups):
             if cache_rows and cache_media_id == self.media_only_id:
                 self.primary_cached = True
             rows.extend(cache_rows)
