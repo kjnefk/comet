@@ -9,6 +9,7 @@ from starlette.background import BackgroundTask
 from comet.core.logger import logger
 from comet.core.models import database, settings
 from comet.services.bandwidth import bandwidth_monitor
+from comet.services.lock import DistributedLock
 from comet.services.status_video import build_status_video_response
 from comet.services.streaming.wrapper import monitored_handle_stream_request
 
@@ -96,6 +97,27 @@ async def add_active_connection(media_id: str, ip: str):
     return connection_id
 
 
+async def admit_active_connection(media_id: str, ip: str) -> str | None:
+    if settings.PROXY_DEBRID_STREAM_MAX_CONNECTIONS <= -1:
+        return await add_active_connection(media_id, ip)
+
+    lock = DistributedLock(
+        f"stream-admission:{ip}",
+        timeout=10,
+        retry_interval=0.05,
+    )
+    if not await lock.acquire(wait_timeout=5):
+        logger.warning(f"Could not serialize stream admission for IP: {ip}")
+        return None
+
+    try:
+        if not await check_ip_connections(ip):
+            return None
+        return await add_active_connection(media_id, ip)
+    finally:
+        await lock.release()
+
+
 async def combined_background_tasks(
     connection_id: str,
     ip: str,
@@ -115,13 +137,12 @@ async def custom_handle_stream_request(
     media_id: str,
     ip: str,
 ):
-    if not await check_ip_connections(ip):
+    connection_id = await admit_active_connection(media_id, ip)
+    if connection_id is None:
         return build_status_video_response(
             ["PROXY_LIMIT_REACHED"],
             default_key="PROXY_LIMIT_REACHED",
         )
-
-    connection_id = await add_active_connection(media_id, ip)
 
     try:
         response = await monitored_handle_stream_request(

@@ -6,6 +6,7 @@ from mediaflow_proxy.utils.http_utils import EnhancedStreamingResponse
 
 from comet.services.streaming.manager import (
     add_active_connection,
+    admit_active_connection,
     combined_background_tasks,
     custom_handle_stream_request,
     on_stream_end,
@@ -14,6 +15,57 @@ from comet.services.streaming.wrapper import monitored_handle_stream_request
 
 
 class StreamingLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_connection_limit_check_and_insert_are_serialized(self):
+        admission_lock = asyncio.Lock()
+        active_connections = 0
+
+        class Lock:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def acquire(self, wait_timeout=None):
+                await admission_lock.acquire()
+                return True
+
+            async def release(self):
+                admission_lock.release()
+
+        async def check(ip):
+            observed = active_connections
+            await asyncio.sleep(0.01)
+            return observed < 1
+
+        async def add(media_id, ip):
+            nonlocal active_connections
+            active_connections += 1
+            return f"connection-{active_connections}"
+
+        with (
+            patch(
+                "comet.services.streaming.manager.settings.PROXY_DEBRID_STREAM_MAX_CONNECTIONS",
+                1,
+            ),
+            patch(
+                "comet.services.streaming.manager.DistributedLock",
+                new=Lock,
+            ),
+            patch(
+                "comet.services.streaming.manager.check_ip_connections",
+                new=check,
+            ),
+            patch(
+                "comet.services.streaming.manager.add_active_connection",
+                new=add,
+            ),
+        ):
+            results = await asyncio.gather(
+                admit_active_connection("first", "127.0.0.1"),
+                admit_active_connection("second", "127.0.0.1"),
+            )
+
+        self.assertEqual(results, ["connection-1", None])
+        self.assertEqual(active_connections, 1)
+
     async def test_end_tracking_failure_does_not_skip_database_cleanup(self):
         execute = AsyncMock()
         with (
@@ -98,11 +150,7 @@ class StreamingLifecycleTests(unittest.IsolatedAsyncioTestCase):
         cleanup = AsyncMock()
         with (
             patch(
-                "comet.services.streaming.manager.check_ip_connections",
-                new=AsyncMock(return_value=True),
-            ),
-            patch(
-                "comet.services.streaming.manager.add_active_connection",
+                "comet.services.streaming.manager.admit_active_connection",
                 new=AsyncMock(return_value="connection"),
             ),
             patch(
