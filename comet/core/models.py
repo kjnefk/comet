@@ -12,16 +12,46 @@ from databases.backends.sqlite import SQLiteConnection
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from RTN import DefaultRanking, SettingsModel
-from RTN.models import (AudioRankModel, CustomRank, CustomRanksConfig,
-                        ExtrasRankModel, HdrRankModel, LanguagesConfig,
-                        OptionsConfig, QualityRankModel, ResolutionConfig,
-                        RipsRankModel)
+from RTN.models import (
+    AudioRankModel,
+    CustomRank,
+    CustomRanksConfig,
+    ExtrasRankModel,
+    HdrRankModel,
+    LanguagesConfig,
+    OptionsConfig,
+    QualityRankModel,
+    ResolutionConfig,
+    RipsRankModel,
+)
 
 from comet.core.db_router import ReplicaAwareDatabase
 from comet.core.logger import logger
 
 _comet_fk_enabled = False
 _SQLITE_BUSY_TIMEOUT_MS = 30000
+_SCRAPER_MODE_FIELDS = (
+    "INDEXER_MANAGER_MODE",
+    "SCRAPE_JACKETT",
+    "SCRAPE_PROWLARR",
+    "SCRAPE_COMET",
+    "SCRAPE_NYAA",
+    "SCRAPE_ANIMETOSHO",
+    "SCRAPE_SEADEX",
+    "SCRAPE_NEKOBT",
+    "SCRAPE_ZILEAN",
+    "SCRAPE_STREMTHRU",
+    "SCRAPE_DMM",
+    "SCRAPE_BITMAGNET",
+    "SCRAPE_TORRENTIO",
+    "SCRAPE_MEDIAFUSION",
+    "SCRAPE_AIOSTREAMS",
+    "SCRAPE_JACKETTIO",
+    "SCRAPE_DEBRIDIO",
+    "SCRAPE_TORBOX",
+    "SCRAPE_TORRENTSDB",
+    "SCRAPE_PEERFLIX",
+)
 
 
 def set_comet_foreign_keys_enabled(enabled: bool) -> None:
@@ -336,6 +366,20 @@ class AppSettings(BaseSettings):
     # Optional friendly name for this node (exchanged with other peers)
     # If not set, users will only see the Node ID
     COMETNET_NODE_ALIAS: Optional[str] = None
+
+    @field_validator(*_SCRAPER_MODE_FIELDS, mode="before")
+    def validate_scraper_mode(cls, value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized == "false":
+                return False
+            if normalized in {"true", "both"}:
+                return True
+            if normalized in {"live", "background"}:
+                return normalized
+        raise ValueError("scraper mode must be false, true, both, live, or background")
 
     @field_validator("EXECUTOR_MAX_WORKERS", mode="before")
     def normalize_executor_workers(cls, v):
