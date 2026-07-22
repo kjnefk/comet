@@ -266,7 +266,6 @@ class GossipEngine:
             return
 
         peer_rep = self.reputation.get_or_create(sender_id)
-        peer_rep.messages_received += 1
         peer_rep.update_seen()
 
         valid_torrents = []
