@@ -304,21 +304,6 @@ class CometNetRelay(CometNetBackend):
             logger.debug(f"Failed to fetch remote stats: {e}")
             return None
 
-    async def fetch_remote_pools(self) -> Optional[Dict]:
-        """Fetch pools from the remote CometNet standalone service."""
-        if not self._session or not self._running:
-            return None
-
-        try:
-            async with self._session.get(f"{self.relay_url}/pools") as response:
-                if response.status == 200:
-                    return await response.json()
-                # Pools endpoint might not exist on older standalone versions
-                return {"pools": {}, "memberships": [], "subscriptions": []}
-        except Exception:
-            # Return empty pools if not available
-            return {"pools": {}, "memberships": [], "subscriptions": []}
-
     async def get_peers(self) -> Dict[str, Any]:
         """Get peers from the remote CometNet standalone service."""
         if not self._session or not self._running:
@@ -404,8 +389,15 @@ class CometNetRelay(CometNetBackend):
 
     async def get_pools(self) -> Dict:
         """Get pools from the standalone service."""
-        pools = await self.fetch_remote_pools()
-        return pools if pools else {"pools": {}, "memberships": [], "subscriptions": []}
+        pools = await self._pool_request("GET", "/pools")
+        if (
+            not isinstance(pools, dict)
+            or not isinstance(pools.get("pools"), dict)
+            or not isinstance(pools.get("memberships"), list)
+            or not isinstance(pools.get("subscriptions"), list)
+        ):
+            raise ValueError("Invalid pools response from standalone")
+        return pools
 
     async def join_pool_with_invite(
         self, pool_id: str, invite_code: str, node_url: Optional[str] = None

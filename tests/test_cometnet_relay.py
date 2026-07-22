@@ -5,11 +5,30 @@ from comet.cometnet.relay import CometNetRelay
 
 
 class FakeSession:
-    def __init__(self):
+    def __init__(self, response=None):
         self.closed = False
+        self.response = response
+
+    def get(self, *args, **kwargs):
+        return self.response
 
     async def close(self):
         self.closed = True
+
+
+class FakeResponse:
+    def __init__(self, status, payload=None):
+        self.status = status
+        self.payload = payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        return False
+
+    async def json(self):
+        return self.payload
 
 
 class CometNetRelayTests(unittest.IsolatedAsyncioTestCase):
@@ -74,3 +93,23 @@ class CometNetRelayTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(finished.is_set())
         self.assertFalse(task.cancelled())
         self.assertTrue(session.closed)
+
+    async def test_get_pools_requires_current_standalone_endpoint(self):
+        pools = {"pools": {}, "memberships": [], "subscriptions": []}
+        relay = CometNetRelay("http://relay")
+        relay._running = True
+        relay._session = FakeSession(FakeResponse(200, pools))
+
+        self.assertEqual(await relay.get_pools(), pools)
+
+        relay._session = FakeSession(FakeResponse(404))
+        with self.assertRaisesRegex(ValueError, "Pool not found"):
+            await relay.get_pools()
+
+    async def test_get_pools_rejects_invalid_current_shape(self):
+        relay = CometNetRelay("http://relay")
+        relay._running = True
+        relay._session = FakeSession(FakeResponse(200, {"pools": []}))
+
+        with self.assertRaisesRegex(ValueError, "Invalid pools response"):
+            await relay.get_pools()
