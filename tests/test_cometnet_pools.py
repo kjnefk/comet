@@ -6,7 +6,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from comet.cometnet.pools import MemberRole, PoolManifest, PoolMember, PoolStore
+from comet.cometnet.pools import (
+    MemberRole,
+    PoolInvite,
+    PoolManifest,
+    PoolMember,
+    PoolStore,
+)
 
 
 class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
@@ -349,3 +355,24 @@ class CometNetPoolStoreTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(arguments=arguments):
                     with self.assertRaises(ValueError):
                         await store.create_invite("pool-a", Identity(), **arguments)
+
+    async def test_invite_links_accept_only_the_current_exact_shape(self):
+        self.assertEqual(
+            PoolInvite.parse_link(
+                "cometnet://join?pool=pool-a&code=invite-code&node=wss%3A%2F%2Fpeer"
+            ),
+            {"pool": "pool-a", "code": "invite-code", "node": "wss://peer"},
+        )
+
+        invalid_links = [
+            "cometnet://pool/pool-a/invite/invite-code",
+            "cometnet://join?pool=Pool-A&code=invite-code",
+            "cometnet://join?pool=pool-a&code=",
+            "cometnet://join?pool=pool-a&code=one&code=two",
+            "cometnet://join?pool=pool-a&code=invite-code&legacy=true",
+            "cometnet://join/path?pool=pool-a&code=invite-code",
+            "cometnet://join?pool=pool-a&code=invite-code#fragment",
+        ]
+        for link in invalid_links:
+            with self.subTest(link=link):
+                self.assertIsNone(PoolInvite.parse_link(link))

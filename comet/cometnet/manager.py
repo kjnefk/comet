@@ -969,7 +969,7 @@ class CometNetService(CometNetBackend):
                 return
 
             # Store the manifest (validation happens inside)
-            if await self.pool_store.validate_manifest(manifest, self.keystore):
+            if await self.pool_store.validate_manifest(manifest):
                 await self.pool_store.store_manifest(manifest)
 
                 # Update our membership status based on the new manifest
@@ -1119,12 +1119,12 @@ class CometNetService(CometNetBackend):
             if not manifest.is_admin(message.updated_by):
                 return
 
-            # Verify signature of the update message
-            if self.keystore:
-                if not await NodeIdentity.verify_hex_async(
-                    message.to_signable_bytes(), message.signature, message.updated_by
-                ):
-                    return
+            # The transport sender may be a relay, so bind the delta directly to
+            # the administrator identified by the message as well.
+            if not await NodeIdentity.verify_hex_async(
+                message.to_signable_bytes(), message.signature, message.updated_by
+            ):
+                return
 
         # Apply update tentatively
         target_member = manifest.get_member(message.member_key)
@@ -1188,7 +1188,9 @@ class CometNetService(CometNetBackend):
 
         # Check carefully if any provided signature validates our new state
         for admin_key, sig in message.manifest_signatures.items():
-            if NodeIdentity.verify_hex(signable, sig, admin_key):
+            if current_manifest.is_admin(admin_key) and NodeIdentity.verify_hex(
+                signable, sig, admin_key
+            ):
                 manifest_valid = True
                 # Adopt the new signatures
                 manifest.signatures = message.manifest_signatures

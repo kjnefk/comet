@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from comet.cometnet.utils import canonicalize_data
 from comet.utils.formatting import normalize_info_hash
 
-# Protocol version for backwards compatibility
+# Exact current signed protocol version
 PROTOCOL_VERSION = "1.0"
 
 

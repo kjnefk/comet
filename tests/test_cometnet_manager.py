@@ -1,11 +1,76 @@
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from comet.cometnet.manager import CometNetService
+from comet.cometnet.pools import MemberRole, PoolManifest, PoolMember
+from comet.cometnet.protocol import PoolMemberUpdate
 
 
 class CometNetManagerTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _pool_manifest():
+        return PoolManifest(
+            pool_id="pool-a",
+            creator_key="creator-key",
+            display_name="Pool A",
+            members=[
+                PoolMember(
+                    public_key="creator-key",
+                    role=MemberRole.CREATOR,
+                    added_by="creator-key",
+                )
+            ],
+        )
+
+    async def test_member_delta_requires_a_current_admin_manifest_signature(self):
+        for signer, accepted in [("rogue-key", False), ("creator-key", True)]:
+            with self.subTest(signer=signer):
+                service = CometNetService(enabled=True)
+                service.pool_store = Mock(
+                    get_manifest=Mock(return_value=self._pool_manifest()),
+                    store_manifest=AsyncMock(),
+                )
+                service.transport = Mock(broadcast=AsyncMock())
+                message = PoolMemberUpdate(
+                    sender_id="relay-node",
+                    signature="delta-signature",
+                    pool_id="pool-a",
+                    action="add",
+                    member_key="new-member",
+                    updated_by="creator-key",
+                    manifest_signatures={signer: "manifest-signature"},
+                )
+
+                with (
+                    patch(
+                        "comet.cometnet.manager.validate_message_security",
+                        new=AsyncMock(return_value=True),
+                    ),
+                    patch(
+                        "comet.cometnet.manager.NodeIdentity.verify_hex_async",
+                        new=AsyncMock(return_value=True),
+                    ) as verify_delta,
+                    patch(
+                        "comet.cometnet.manager.NodeIdentity.verify_hex",
+                        return_value=True,
+                    ),
+                    patch.object(
+                        service, "_send_pool_manifest", new=AsyncMock()
+                    ) as send_manifest,
+                ):
+                    await service._handle_pool_member_update("relay-node", message)
+
+                verify_delta.assert_awaited_once()
+                if accepted:
+                    service.pool_store.store_manifest.assert_awaited_once()
+                    service.transport.broadcast.assert_awaited_once()
+                    send_manifest.assert_not_awaited()
+                else:
+                    service.pool_store.store_manifest.assert_not_awaited()
+                    service.transport.broadcast.assert_not_awaited()
+                    send_manifest.assert_awaited_once()
+
     async def test_received_torrent_save_failure_propagates_to_gossip(self):
         service = CometNetService(enabled=True)
 

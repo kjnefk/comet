@@ -385,23 +385,39 @@ class PoolInvite(BaseModel):
 
         Returns dict with 'pool', 'code', and optionally 'node' keys.
         """
-        if not link.startswith("cometnet://join?"):
-            # Try legacy format
-            if link.startswith("cometnet://pool/"):
-                parts = link.replace("cometnet://pool/", "").split("/invite/")
-                if len(parts) == 2:
-                    return {"pool": parts[0], "code": parts[1]}
+        if type(link) is not str:
             return None
-        query = link.split("?", 1)[1] if "?" in link else ""
-        params = urllib.parse.parse_qs(query)
-        result = {}
-        if "pool" in params:
-            result["pool"] = params["pool"][0]
-        if "code" in params:
-            result["code"] = params["code"][0]
+        try:
+            parsed = urllib.parse.urlsplit(link)
+            params = urllib.parse.parse_qs(
+                parsed.query,
+                keep_blank_values=True,
+                strict_parsing=True,
+            )
+        except ValueError:
+            return None
+        if (
+            parsed.scheme != "cometnet"
+            or parsed.netloc != "join"
+            or parsed.path
+            or parsed.fragment
+            or set(params) not in ({"pool", "code"}, {"pool", "code", "node"})
+            or any(len(values) != 1 or not values[0] for values in params.values())
+        ):
+            return None
+
+        pool_id = params["pool"][0]
+        if (
+            pool_id != pool_id.strip().lower()
+            or not 2 <= len(pool_id) <= 64
+            or not pool_id.replace("-", "").replace("_", "").isalnum()
+        ):
+            return None
+
+        result = {"pool": pool_id, "code": params["code"][0]}
         if "node" in params:
             result["node"] = params["node"][0]
-        return result if result else None
+        return result
 
 
 class PoolStore:
@@ -1249,7 +1265,7 @@ class PoolStore:
 
     # ==================== Validation ====================
 
-    async def validate_manifest(self, manifest: PoolManifest, keystore=None) -> bool:
+    async def validate_manifest(self, manifest: PoolManifest) -> bool:
         """
         Validate a pool manifest.
 
@@ -1257,10 +1273,6 @@ class PoolStore:
         1. At least one valid admin signature
         2. Creator is an admin
         3. Basic structure validity
-
-        Args:
-            manifest: The manifest to validate
-            keystore: Optional keystore (not used for direct signature verification but kept for API compatibility)
 
         Returns:
             True if the manifest is valid
