@@ -1,12 +1,10 @@
-import asyncio
-
 import orjson
 from RTN import ParsedData
 
 from comet.debrid.manager import retrieve_debrid_availability
-from comet.services.debrid_cache import (cache_availability,
-                                         get_cached_availability,
-                                         get_cached_availability_any_service)
+from comet.services.debrid_cache import (get_cached_availability,
+                                         get_cached_availability_any_service,
+                                         schedule_cache_availability)
 from comet.utils.parsing import ensure_multi_language
 
 
@@ -136,7 +134,7 @@ class DebridService:
                 if file["size"] is not None:
                     torrent["size"] = file["size"]
 
-        asyncio.create_task(cache_availability(self.debrid_service, availability))
+        schedule_cache_availability(self.debrid_service, availability)
         return cached_hashes
 
     async def check_existing_availability(

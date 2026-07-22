@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from comet.core.database import (build_distinct_from_predicate,
@@ -5,6 +6,7 @@ from comet.core.database import (build_distinct_from_predicate,
                                  build_scope_lookup_params, build_scope_params,
                                  build_upsert_assignments, encode_json_param)
 from comet.core.models import database, settings
+from comet.core.logger import logger
 from comet.utils.parsing import default_dump
 
 DEBRID_UPDATE_INTERVAL = (
@@ -31,6 +33,32 @@ SCOPE_FILTER_SQL = """
 season_norm = :season_norm
 AND episode_norm = :episode_norm
 """
+_cache_write_tasks: set[asyncio.Task] = set()
+
+
+def _handle_cache_write_done(task: asyncio.Task) -> None:
+    _cache_write_tasks.discard(task)
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.warning(f"Failed to persist debrid availability: {error}")
+
+
+def schedule_cache_availability(debrid_service: str, availability: list):
+    task = asyncio.create_task(
+        cache_availability(debrid_service, availability),
+        name=f"debrid-cache:{debrid_service}",
+    )
+    _cache_write_tasks.add(task)
+    task.add_done_callback(_handle_cache_write_done)
+    return task
+
+
+async def shutdown_cache_writes() -> None:
+    if not _cache_write_tasks:
+        return
+    await asyncio.gather(*tuple(_cache_write_tasks), return_exceptions=True)
 
 
 def _build_conditional_update() -> str:

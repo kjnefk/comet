@@ -9,7 +9,7 @@ from comet.core.logger import logger
 from comet.core.models import settings
 from comet.debrid.exceptions import DebridAuthError, DebridLinkGenerationError
 from comet.metadata.episode_index import EpisodeIndexService
-from comet.services.debrid_cache import cache_availability
+from comet.services.debrid_cache import schedule_cache_availability
 from comet.services.filtering import quick_alias_match
 from comet.services.torrent_manager import torrent_update_queue
 from comet.utils.parsing import (ensure_multi_language, is_video,
@@ -623,9 +623,7 @@ class StremThru:
                 )
 
             if all_files_for_cache:
-                asyncio.create_task(
-                    cache_availability(self.store_name, all_files_for_cache)
-                )
+                schedule_cache_availability(self.store_name, all_files_for_cache)
 
             link = await self._post_store_json(
                 f"/link/generate?client_ip={self.client_ip}",
