@@ -233,8 +233,23 @@ class CometNetRelay(CometNetBackend):
             ) as response:
                 if response.status == 200:
                     data = await response.json()
-                    queued = data.get("queued", 0)
-                    errors = len(data.get("errors", []))
+                    if not isinstance(data, dict) or data.get("status") != "completed":
+                        raise ValueError("Invalid relay batch response")
+                    queued = data.get("queued")
+                    errors_data = data.get("errors")
+                    total = data.get("total")
+                    if (
+                        isinstance(queued, bool)
+                        or not isinstance(queued, int)
+                        or queued < 0
+                        or isinstance(total, bool)
+                        or not isinstance(total, int)
+                        or total != len(torrents)
+                        or not isinstance(errors_data, list)
+                        or queued + len(errors_data) != total
+                    ):
+                        raise ValueError("Invalid relay batch response")
+                    errors = len(errors_data)
                     self._total_relayed += queued
                     self._total_errors += errors
                     logger.log(

@@ -12,6 +12,9 @@ class FakeSession:
     def get(self, *args, **kwargs):
         return self.response
 
+    def post(self, *args, **kwargs):
+        return self.response
+
     async def close(self):
         self.closed = True
 
@@ -113,3 +116,38 @@ class CometNetRelayTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(ValueError, "Invalid pools response"):
             await relay.get_pools()
+
+    async def test_send_batch_validates_result_before_updating_counters(self):
+        relay = CometNetRelay("http://relay")
+        relay._session = FakeSession(
+            FakeResponse(
+                200,
+                {
+                    "status": "completed",
+                    "queued": 1,
+                    "errors": [{"info_hash": "b", "error": "invalid"}],
+                    "total": 2,
+                },
+            )
+        )
+
+        self.assertEqual(await relay._send_batch([{"id": "a"}, {"id": "b"}]), 1)
+        self.assertEqual(relay._total_relayed, 1)
+        self.assertEqual(relay._total_errors, 1)
+
+        relay._session = FakeSession(
+            FakeResponse(
+                200,
+                {
+                    "status": "completed",
+                    "queued": True,
+                    "errors": [],
+                    "total": 2,
+                },
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "Invalid relay batch response"):
+            await relay._send_batch([{"id": "a"}, {"id": "b"}])
+
+        self.assertEqual(relay._total_relayed, 1)
+        self.assertEqual(relay._total_errors, 1)
