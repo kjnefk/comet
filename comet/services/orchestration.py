@@ -103,7 +103,7 @@ class TorrentManager:
         async for scraper_name, results in scraper_manager.scrape_all(request):
             await self.filter_manager(scraper_name, results)
 
-        asyncio.create_task(self.cache_torrents())
+        await self.cache_torrents()
 
         for torrent in self.ready_to_cache:
             if not self._matches_requested_scope(torrent["parsed"]):
