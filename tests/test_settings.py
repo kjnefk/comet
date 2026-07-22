@@ -124,3 +124,20 @@ class AppSettingsTests(unittest.TestCase):
         )
         self.assertEqual(current.MEMORY_TRIM_INTERVAL, 0)
         self.assertEqual(current.RATELIMIT_MAX_RETRIES, 0)
+
+    def test_session_configuration_requires_current_secure_shape(self):
+        for field in (
+            "ADMIN_DASHBOARD_SESSION_TTL",
+            "CONFIGURE_PAGE_SESSION_TTL",
+        ):
+            for value in (True, 59, 0, None):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(ValidationError):
+                        AppSettings(_env_file=None, **{field: value})
+
+        for password in ("", None):
+            with self.subTest(password=password):
+                with self.assertRaisesRegex(
+                    ValidationError, "must be a non-empty string"
+                ):
+                    AppSettings(_env_file=None, ADMIN_DASHBOARD_PASSWORD=password)

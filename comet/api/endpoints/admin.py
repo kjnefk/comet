@@ -21,7 +21,7 @@ router = APIRouter()
 templates = Jinja2Templates("comet/templates")
 background_scraper_start_lock = asyncio.Lock()
 ADMIN_SESSION_COOKIE = "admin_session"
-ADMIN_SESSION_TTL = max(60, settings.ADMIN_DASHBOARD_SESSION_TTL)
+ADMIN_SESSION_TTL = settings.ADMIN_DASHBOARD_SESSION_TTL
 ADMIN_SESSION_SECRET = derive_session_secret(
     settings.ADMIN_DASHBOARD_PASSWORD,
     "admin-dashboard",

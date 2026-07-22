@@ -251,7 +251,7 @@ def log_startup_info(settings):
         admin_password = censor(admin_password)
     else:
         admin_password = f"{admin_password} (Randomly Generated)"
-    admin_session_ttl = max(60, settings.ADMIN_DASHBOARD_SESSION_TTL)
+    admin_session_ttl = settings.ADMIN_DASHBOARD_SESSION_TTL
 
     logger.log(
         "COMET",
@@ -259,7 +259,7 @@ def log_startup_info(settings):
     )
 
     configure_password = settings.CONFIGURE_PAGE_PASSWORD
-    configure_session_ttl = max(60, settings.CONFIGURE_PAGE_SESSION_TTL)
+    configure_session_ttl = settings.CONFIGURE_PAGE_SESSION_TTL
     if configure_password:
         if "CONFIGURE_PAGE_PASSWORD" in settings.model_fields_set:
             configure_password = censor(configure_password)

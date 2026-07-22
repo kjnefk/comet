@@ -495,6 +495,28 @@ class AppSettings(BaseSettings):
         return v
 
     @field_validator(
+        "ADMIN_DASHBOARD_SESSION_TTL",
+        "CONFIGURE_PAGE_SESSION_TTL",
+        mode="before",
+    )
+    def reject_boolean_session_ttls(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("session TTLs cannot be booleans")
+        return value
+
+    @field_validator("ADMIN_DASHBOARD_SESSION_TTL", "CONFIGURE_PAGE_SESSION_TTL")
+    def validate_session_ttls(cls, value):
+        if value is None or value < 60:
+            raise ValueError("session TTLs must be integers of at least 60 seconds")
+        return value
+
+    @field_validator("ADMIN_DASHBOARD_PASSWORD")
+    def validate_admin_dashboard_password(cls, value):
+        if type(value) is not str or not value:
+            raise ValueError("ADMIN_DASHBOARD_PASSWORD must be a non-empty string")
+        return value
+
+    @field_validator(
         "CONFIGURE_PAGE_PASSWORD",
         "PUBLIC_API_TOKEN",
         "PUBLIC_API_TOKEN_FILE",
