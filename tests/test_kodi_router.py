@@ -56,9 +56,53 @@ def _load_router():
 
 
 router = _load_router()
+settings_window = importlib.import_module("lib.custom_settings_window")
 
 
 class KodiRouterTests(unittest.TestCase):
+    def test_setup_code_response_requires_current_bounded_shape(self):
+        valid = {
+            "code": "1234abcd",
+            "configure_url": "https://comet.test/configure?kodi_code=1234abcd",
+            "expires_in": 300,
+            "stremio_api_prefix": "api/",
+        }
+        self.assertEqual(
+            settings_window._parse_setup_code_response(valid),
+            ("1234abcd", valid["configure_url"], 300, "api/"),
+        )
+        for response in (
+            None,
+            [],
+            {**valid, "code": None},
+            {**valid, "configure_url": "javascript:alert(1)"},
+            {**valid, "expires_in": True},
+            {**valid, "expires_in": 0},
+            {**valid, "expires_in": settings_window.MAX_SETUP_POLL_SECONDS + 1},
+            {**valid, "stremio_api_prefix": []},
+        ):
+            with self.subTest(response=response):
+                with self.assertRaisesRegex(ValueError, "Invalid response"):
+                    settings_window._parse_setup_code_response(response)
+
+    def test_manifest_response_requires_current_string_fields(self):
+        self.assertEqual(
+            settings_window._parse_manifest_response(
+                {"secret_string": "config", "stremio_api_prefix": "api/"}
+            ),
+            ("config", "api/"),
+        )
+        for response in (
+            None,
+            [],
+            {},
+            {"secret_string": []},
+            {"secret_string": "x", "stremio_api_prefix": None},
+        ):
+            with self.subTest(response=response):
+                with self.assertRaisesRegex(ValueError, "Invalid response"):
+                    settings_window._parse_manifest_response(response)
+
     def test_current_stream_parser_isolates_malformed_entries(self):
         valid_url = {
             "name": "Direct",
