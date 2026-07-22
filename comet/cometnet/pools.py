@@ -838,7 +838,12 @@ class PoolStore:
             try:
                 async with aiofiles.open(memberships_file, "r") as f:
                     content = await f.read()
-                    self._memberships = set(json.loads(content))
+                    data = json.loads(content)
+                if not isinstance(data, list):
+                    raise ValueError("memberships root must be a list")
+                self._memberships = {
+                    value for value in data if isinstance(value, str) and value
+                }
             except Exception as e:
                 logger.warning(f"Failed to load memberships: {e}")
 
@@ -866,7 +871,12 @@ class PoolStore:
             try:
                 async with aiofiles.open(subscriptions_file, "r") as f:
                     content = await f.read()
-                    self._subscriptions.update(json.loads(content))
+                    data = json.loads(content)
+                if not isinstance(data, list):
+                    raise ValueError("subscriptions root must be a list")
+                self._subscriptions.update(
+                    value for value in data if isinstance(value, str) and value
+                )
             except Exception as e:
                 logger.warning(f"Failed to load subscriptions: {e}")
 
@@ -929,9 +939,17 @@ class PoolStore:
                 async with aiofiles.open(peers_file, "r") as f:
                     content = await f.read()
                     data = json.loads(content)
+                if not isinstance(data, dict):
+                    raise ValueError("pool peers root must be an object")
                 # Convert lists back to sets
                 for pool_id, peers in data.items():
-                    self._pool_peers[pool_id] = set(peers)
+                    if not isinstance(pool_id, str) or not pool_id:
+                        continue
+                    if not isinstance(peers, list):
+                        continue
+                    self._pool_peers[pool_id] = {
+                        peer for peer in peers if isinstance(peer, str) and peer
+                    }
             except Exception as e:
                 logger.warning(f"Failed to load pool peers: {e}")
 
