@@ -24,3 +24,17 @@ class AppSettingsTests(unittest.TestCase):
             "scraper mode must be false, true, both, live, or background",
         ):
             AppSettings(_env_file=None, SCRAPE_NYAA="lvie")
+
+    def test_non_positive_concurrency_fails_configuration(self):
+        for field in (
+            "NYAA_MAX_CONCURRENT_PAGES",
+            "ANIMETOSHO_MAX_CONCURRENT_PAGES",
+            "DMM_INGEST_CONCURRENT_WORKERS",
+            "DMM_INGEST_BATCH_SIZE",
+            "BITMAGNET_MAX_CONCURRENT_PAGES",
+        ):
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(
+                    ValidationError, "work count must be a positive integer"
+                ):
+                    AppSettings(_env_file=None, **{field: 0})

@@ -52,6 +52,17 @@ _SCRAPER_MODE_FIELDS = (
     "SCRAPE_TORRENTSDB",
     "SCRAPE_PEERFLIX",
 )
+_POSITIVE_WORK_COUNT_FIELDS = (
+    "EXECUTOR_MAX_WORKERS",
+    "DATABASE_BATCH_SIZE",
+    "NYAA_MAX_CONCURRENT_PAGES",
+    "ANIMETOSHO_MAX_CONCURRENT_PAGES",
+    "DMM_INGEST_CONCURRENT_WORKERS",
+    "DMM_INGEST_BATCH_SIZE",
+    "BITMAGNET_MAX_CONCURRENT_PAGES",
+    "BACKGROUND_SCRAPER_CONCURRENT_WORKERS",
+    "FILTER_PARSE_CACHE_SHARDS",
+)
 
 
 def set_comet_foreign_keys_enabled(enabled: bool) -> None:
@@ -380,6 +391,12 @@ class AppSettings(BaseSettings):
             if normalized in {"live", "background"}:
                 return normalized
         raise ValueError("scraper mode must be false, true, both, live, or background")
+
+    @field_validator(*_POSITIVE_WORK_COUNT_FIELDS)
+    def validate_positive_work_count(cls, value):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError("work count must be a positive integer")
+        return value
 
     @field_validator("EXECUTOR_MAX_WORKERS", mode="before")
     def normalize_executor_workers(cls, v):
