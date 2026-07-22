@@ -84,7 +84,7 @@ class DebridService:
         season: int,
         episode: int,
         target_air_date: str | None = None,
-    ) -> set[str]:
+    ) -> tuple[set[str], dict[str, dict]]:
         availability = await retrieve_debrid_availability(
             session,
             media_id,
@@ -142,7 +142,7 @@ class DebridService:
 
     async def check_existing_availability(
         self, info_hashes: list, season: int, episode: int, torrents: dict | None
-    ) -> set[str]:
+    ) -> tuple[set[str], dict[str, dict]]:
         if len(info_hashes) == 0:
             return set()
 
@@ -151,6 +151,7 @@ class DebridService:
         )
 
         cached_hashes = set()
+        torrent_updates = {}
         for row in rows:
             info_hash = row["info_hash"]
             cached_hashes.add(info_hash)
@@ -159,12 +160,13 @@ class DebridService:
                 if torrent is None:
                     continue
 
+                update = torrent_updates.setdefault(info_hash, {})
                 file_index = self._coerce_file_index(row["file_index"])
                 if file_index is not None:
-                    torrent["fileIndex"] = file_index
+                    update["fileIndex"] = file_index
 
                 if row["size"] is not None:
-                    torrent["size"] = row["size"]
+                    update["size"] = row["size"]
 
                 if row["parsed"] is not None:
                     cached_parsed = load_cached_parsed(row["parsed"])
@@ -173,12 +175,12 @@ class DebridService:
                             torrent.get("parsed"), cached_parsed
                         )
                         if merged_parsed is not None:
-                            torrent["parsed"] = merged_parsed
+                            update["parsed"] = merged_parsed
 
                 if row["title"] is not None:
-                    torrent["title"] = row["title"]
+                    update["title"] = row["title"]
 
-        return cached_hashes
+        return cached_hashes, torrent_updates
 
     @classmethod
     async def apply_cached_availability_any_service(

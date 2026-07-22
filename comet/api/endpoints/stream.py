@@ -248,13 +248,17 @@ def _merge_service_cache_status(target: dict, incoming: dict):
                 cache_map[service] = False
 
 
-def _dedupe_debrid_entries_by_service(debrid_entries: list) -> list:
-    unique_services = {}
+def _group_debrid_entries_by_service(debrid_entries: list) -> list[tuple[str, list]]:
+    service_entries = {}
+    seen_credentials = set()
     for entry in debrid_entries:
         service = entry["service"]
-        if service not in unique_services:
-            unique_services[service] = entry
-    return list(unique_services.values())
+        credential = (service, entry["apiKey"])
+        if credential in seen_credentials:
+            continue
+        seen_credentials.add(credential)
+        service_entries.setdefault(service, []).append(entry)
+    return list(service_entries.items())
 
 
 async def background_scrape(
@@ -319,25 +323,36 @@ async def check_multi_service_availability(
         api_key = entry["apiKey"]
 
         debrid_instance = DebridService(service, api_key, "")
-        cached_hashes = await debrid_instance.check_existing_availability(
+        (
+            cached_hashes,
+            torrent_updates,
+        ) = await debrid_instance.check_existing_availability(
             info_hashes, season, episode, torrents
         )
 
-        return service, cached_hashes
+        return service, cached_hashes, torrent_updates
 
-    unique_services = _dedupe_debrid_entries_by_service(debrid_entries)
+    service_groups = _group_debrid_entries_by_service(debrid_entries)
 
-    if unique_services:
+    if service_groups:
         results = await asyncio.gather(
-            *[check_service(e) for e in unique_services],
+            *(check_service(entries[0]) for _, entries in service_groups),
             return_exceptions=True,
         )
 
+        enriched_hashes = set()
         for result in results:
             if isinstance(result, Exception):
                 logger.log("DEBRID", f"❌ Error checking availability: {result}")
                 continue
-            service, cached_hashes = result
+            service, cached_hashes, torrent_updates = result
+            for info_hash, update in torrent_updates.items():
+                if info_hash in enriched_hashes:
+                    continue
+                torrent = torrents.get(info_hash)
+                if torrent is not None:
+                    torrent.update(update)
+                    enriched_hashes.add(info_hash)
             for info_hash in cached_hashes:
                 service_cache_status[info_hash][service] = True
 
@@ -366,38 +381,41 @@ async def get_and_cache_multi_service_availability(
     tracker_map = {h: torrents[h]["tracker"] for h in info_hashes}
     sources_map = {h: torrents[h]["sources"] for h in info_hashes}
 
-    unique_services = _dedupe_debrid_entries_by_service(debrid_entries)
+    service_groups = _group_debrid_entries_by_service(debrid_entries)
 
-    async def check_service(entry):
-        service = entry["service"]
-        api_key = entry["apiKey"]
+    async def check_service(service, entries):
+        auth_error = None
+        for entry in entries:
+            try:
+                debrid_instance = DebridService(service, entry["apiKey"], ip)
+                (
+                    cached_hashes,
+                    torrent_updates,
+                ) = await debrid_instance.get_and_cache_availability(
+                    session,
+                    info_hashes,
+                    seeders_map,
+                    tracker_map,
+                    sources_map,
+                    torrents,
+                    media_id,
+                    media_only_id,
+                    season,
+                    episode,
+                    target_air_date=target_air_date,
+                )
+                return service, cached_hashes, torrent_updates, None
+            except DebridAuthError as error:
+                if auth_error is None:
+                    auth_error = error
+            except Exception as error:
+                return service, None, None, error
 
-        try:
-            debrid_instance = DebridService(service, api_key, ip)
-            (
-                cached_hashes,
-                torrent_updates,
-            ) = await debrid_instance.get_and_cache_availability(
-                session,
-                info_hashes,
-                seeders_map,
-                tracker_map,
-                sources_map,
-                torrents,
-                media_id,
-                media_only_id,
-                season,
-                episode,
-                target_air_date=target_air_date,
-            )
+        return service, None, None, auth_error
 
-            return service, cached_hashes, torrent_updates, None
-        except Exception as e:
-            return service, None, None, e
-
-    if unique_services:
+    if service_groups:
         results = await asyncio.gather(
-            *[check_service(e) for e in unique_services],
+            *(check_service(service, entries) for service, entries in service_groups),
             return_exceptions=True,
         )
 

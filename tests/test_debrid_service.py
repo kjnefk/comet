@@ -32,11 +32,14 @@ class DebridServiceCacheTests(unittest.IsolatedAsyncioTestCase):
             "comet.services.debrid.get_cached_availability",
             return_value=rows,
         ):
-            cached = await service.check_existing_availability(
+            cached, updates = await service.check_existing_availability(
                 list(torrents), None, None, torrents
             )
 
         self.assertEqual(cached, set(torrents))
+        self.assertNotIn("fileIndex", torrents["a" * 40])
+        self.assertNotIn("fileIndex", torrents["b" * 40])
         self.assertIsNone(torrents["a" * 40]["parsed"])
-        self.assertEqual(torrents["a" * 40]["fileIndex"], 1)
-        self.assertEqual(torrents["b" * 40]["parsed"].raw_title, "Valid.mkv")
+        self.assertEqual(updates["a" * 40]["fileIndex"], 1)
+        self.assertNotIn("parsed", updates["a" * 40])
+        self.assertEqual(updates["b" * 40]["parsed"].raw_title, "Valid.mkv")
