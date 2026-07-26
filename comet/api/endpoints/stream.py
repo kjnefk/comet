@@ -4,6 +4,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, Request
 
 from comet.core.config_validation import config_check
+from comet.core.logger import logger
 from comet.core.models import settings
 from comet.debrid.manager import get_debrid_extension
 from comet.observability import metrics
@@ -22,6 +23,7 @@ from comet.utils.formatting import (
     get_formatted_components,
     get_formatted_components_plain,
 )
+from comet.utils.http_client import http_client_manager
 from comet.utils.network import get_client_ip
 
 streams = APIRouter()
@@ -395,23 +397,6 @@ async def stream(
     torrent_extension = get_debrid_extension("torrent")
     torrent_service = "" if kodi else torrent_extension
 
-    if search_result.show_account_sync_trigger:
-        for entry_index, _, debrid_extension in debrid_stream_specs:
-            cached_results.append(
-                {
-                    "name": (
-                        f"[{debrid_extension}] Comet Sync"
-                        if kodi
-                        else f"[{debrid_extension}🔄] Comet Sync"
-                    ),
-                    "description": (
-                        "Sync debrid account library now.\n"
-                        "Select this stream, then retry this title in a few seconds."
-                    ),
-                    "url": f"{playback_base_url}/debrid-sync/{entry_index}",
-                }
-            )
-
     selected_info_hashes = _select_info_hashes_by_resolution(
         ranked_info_hashes=search_result.ranked_info_hashes,
         torrents=torrents,
@@ -429,6 +414,7 @@ async def stream(
     )
 
     added_hashes = set()
+    http_session = await http_client_manager.get_session()
 
     for info_hash in ranked_info_hashes:
         torrent = torrents[info_hash]
@@ -457,6 +443,26 @@ async def stream(
                 if info_hash_cache_status
                 else False
             )
+
+            if not is_cached and service == "torbox" and (torrent.get("seeders") or 0) > 35:
+                async def _cache_to_torbox(e_idx=entry_index, ih=info_hash, t_title=torrent_title, srcs=torrent.get("sources"), _session=http_session):
+                    try:
+                        api_key = debrid_entries[e_idx]["apiKey"]
+                        mag = f"magnet:?xt=urn:btih:{ih}&dn={quote(t_title)}"
+                        if srcs:
+                            for source in srcs:
+                                mag += f"&tr={quote(source, safe='')}"
+
+                        async with _session.post(
+                            "https://api.torbox.app/v1/api/torrents/createtorrent",
+                            headers={"Authorization": f"Bearer {api_key}"},
+                            data={"magnet": mag}
+                        ) as resp:
+                            if resp.status != 200:
+                                logger.warning(f"Torbox direct cache failed for {ih}: {await resp.text()}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cache torrent {ih} to torbox: {e}")
+                background_tasks.add_task(_cache_to_torbox)
 
             if config["cachedOnly"] and not is_cached:
                 continue
