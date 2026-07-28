@@ -2,6 +2,21 @@
 
 <!-- markdownlint-disable MD024 -->
 
+## [2.58.0](https://github.com/g0ldyy/comet/compare/v2.57.0...v2.58.0) (2026-07-27)
+
+
+### Features
+
+* **cloudflare:** add Torznab cache rule for improved feed caching ([bd375e7](https://github.com/g0ldyy/comet/commit/bd375e7975902934c44d48104f5a04ae28cf5f37))
+
+## [2.57.0](https://github.com/g0ldyy/comet/compare/v2.56.0...v2.57.0) (2026-07-26)
+
+
+### Features
+
+* **torznab:** update feed serialization to ignore offset and limit p… ([46a4ca3](https://github.com/g0ldyy/comet/commit/46a4ca3eea34dc7c63f78d3cb3dedb3c4eeeab37))
+* **torznab:** update feed serialization to ignore offset and limit parameters, enhance response structure ([c32729e](https://github.com/g0ldyy/comet/commit/c32729e55691c5afe203698ab3335a12deaeed83))
+
 ## [2.56.0](https://github.com/g0ldyy/comet/compare/v2.55.0...v2.56.0) (2026-07-25)
 
 
